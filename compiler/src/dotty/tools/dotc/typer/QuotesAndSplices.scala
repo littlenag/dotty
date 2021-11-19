@@ -103,6 +103,7 @@ trait QuotesAndSplices {
         def markAsMacro(c: Context): Unit =
           if (c.owner eq c.outer.owner) markAsMacro(c.outer)
           else if (c.owner.isInlineMethod) c.owner.setFlag(Macro)
+          else if (c.owner.isInlineTrait) c.owner.setFlag(Macro)
           else if (!c.outer.owner.is(Package)) markAsMacro(c.outer)
           else assert(ctx.reporter.hasErrors) // Did not find inline def to mark as macro
         markAsMacro(ctx)

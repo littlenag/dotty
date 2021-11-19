@@ -3453,6 +3453,8 @@ object Parsers {
      */
     def tmplDef(start: Int, mods: Modifiers): Tree =
       in.token match {
+        case IDENTIFIER if isIdent(nme.inline) =>
+          classDef(start, in.skipToken(addFlag(mods, Trait | Inline)))
         case TRAIT =>
           classDef(start, in.skipToken(addFlag(mods, Trait)))
         case CLASS =>

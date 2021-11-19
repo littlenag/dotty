@@ -2093,6 +2093,7 @@ import transform.SymUtils._
 
   class ParamsNoInline(owner: Symbol)(using Context)
     extends SyntaxMsg(ParamsNoInlineID) {
+    // TODO{mk} and must be used for trait arguments!
     def msg = em"""${hl("inline")} modifier can only be used for parameters of inline methods"""
     def explain = ""
   }
