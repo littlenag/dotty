@@ -1369,6 +1369,12 @@ class Namer { typer: Typer =>
       )
       typr.println(i"completing $denot, parents = $parents%, %, parentTypes = $parentTypes%, %")
 
+
+      // Apply modifications by inherited inline traits
+
+
+
+      // Now handle deriving type class instances...
       if (impl.derived.nonEmpty) {
         val (derivingClass, derivePos) = original.removeAttachment(desugar.DerivingCompanion) match {
           case Some(pos) => (cls.companionClass.orElse(cls).asClass, pos)
