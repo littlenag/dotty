@@ -1,13 +1,11 @@
 ---
+layout: doc-page
 title: "Explicit Nulls"
-type: section
-num: 48
-previous-page: /scala3/reference/other-new-features/indentation
-next-page: /scala3/reference/other-new-features/safe-initialization
+movedTo: https://docs.scala-lang.org/scala3/reference/other-new-features/explicit-nulls.html
 ---
 
 Explicit nulls is an opt-in feature that modifies the Scala type system, which makes reference types
-(anything that extends `AnyRef`) _non-nullable_.
+(anything that extends [`AnyRef`](https://scala-lang.org/api/3.x/scala/AnyRef.html)) _non-nullable_.
 
 This means the following code will no longer typecheck:
 
@@ -15,7 +13,7 @@ This means the following code will no longer typecheck:
 val x: String = null // error: found `Null`, but required `String`
 ```
 
-Instead, to mark a type as nullable we use a [union type](../new-types/union-types.html)
+Instead, to mark a type as nullable we use a [union type](../new-types/union-types.md)
 
 ```scala
 val x: String | Null = null // ok
@@ -38,7 +36,7 @@ When explicit nulls are enabled, the type hierarchy changes so that `Null` is on
 
 This is the new type hierarchy:
 
-!["Type Hierarchy for Explicit Nulls"](/resources/images/scala3/explicit-nulls/explicit-nulls-type-hierarchy.png)
+!["Type Hierarchy for Explicit Nulls"](images/explicit-nulls/explicit-nulls-type-hierarchy.png)
 
 After erasure, `Null` remains a subtype of all reference types (as forced by the JVM).
 
@@ -61,7 +59,7 @@ So far, we have found the following useful:
 
   Don't use `.nn` on mutable variables directly, because it may introduce an unknown type into the type of the variable.
 
-- An `unsafeNulls` language feature.
+- An [`unsafeNulls`](https://scala-lang.org/api/3.x/scala/runtime/stdLibPatches/language$$unsafeNulls$.html) language feature.
 
   When imported, `T | Null` can be used as `T`, similar to regular Scala (without explicit nulls).
 
@@ -83,7 +81,7 @@ val c = new C()
 ```
 
 The unsoundness above can be caught by the compiler with the option `-Ysafe-init`.
-More details can be found in [safe initialization](./safe-initialization.html).
+More details can be found in [safe initialization](./safe-initialization.md).
 
 ## Equality
 
@@ -279,7 +277,7 @@ We illustrate the rules with following examples:
 
 ### Override check
 
-When we check overriding between Scala classes and Java classes, the rules are relaxed for `Null` type with this feature, in order to help users to working with Java libraries.
+When we check overriding between Scala classes and Java classes, the rules are relaxed for [`Null`](https://scala-lang.org/api/3.x/scala/Null.html) type with this feature, in order to help users to working with Java libraries.
 
 Suppose we have Java method `String f(String x)`, we can override this method in Scala in any of the following forms:
 
@@ -450,10 +448,10 @@ We don't support:
 
 ### UnsafeNulls
 
-It is difficult to work with many nullable values, we introduce a language feature `unsafeNulls`.
+It is difficult to work with many nullable values, we introduce a language feature [`unsafeNulls`](https://scala-lang.org/api/3.x/scala/runtime/stdLibPatches/language$$unsafeNulls$.html).
 Inside this "unsafe" scope, all `T | Null` values can be used as `T`.
 
-Users can import `scala.language.unsafeNulls` to create such scopes, or use `-language:unsafeNulls` to enable this feature globally (for migration purpose only).
+Users can import [`scala.language.unsafeNulls`](https://scala-lang.org/api/3.x/scala/runtime/stdLibPatches/language$$unsafeNulls$.html) to create such scopes, or use `-language:unsafeNulls` to enable this feature globally (for migration purpose only).
 
 Assume `T` is a reference type (a subtype of `AnyRef`), the following unsafe operation rules are
 applied in this unsafe-nulls scope:
@@ -472,7 +470,7 @@ can be used as `T2` if `T1` is a subtype of `T2` using regular subtyping rules
 
 Addtionally, `null` can be used as `AnyRef` (`Object`), which means you can select `.eq` or `.toString` on it.
 
-The program in `unsafeNulls` will have a **similar** semantic as regular Scala, but not **equivalent**.
+The program in [`unsafeNulls`](https://scala-lang.org/api/3.x/scala/runtime/stdLibPatches/language$$unsafeNulls$.html) will have a **similar** semantic as regular Scala, but not **equivalent**.
 
 For example, the following code cannot be compiled even using unsafe nulls. Because of the
 Java interoperation, the type of the get method becomes `T | Null`.
@@ -485,7 +483,7 @@ Since the compiler doesn’t know whether `T` is a reference type, it is unable 
 to `T`. A `.nn` need to be inserted after `xs.get(0)` by user manually to fix the error, which
 strips the `Null` from its type.
 
-The intention of this `unsafeNulls` is to give users a better migration path for explicit nulls.
+The intention of this [`unsafeNulls`](https://scala-lang.org/api/3.x/scala/runtime/stdLibPatches/language$$unsafeNulls$.html) is to give users a better migration path for explicit nulls.
 Projects for Scala 2 or regular Scala 3 can try this by adding `-Yexplicit-nulls -language:unsafeNulls`
 to the compile options. A small number of manual modifications are expected. To migrate to the full
 explicit nulls feature in the future, `-language:unsafeNulls` can be dropped and add
@@ -516,9 +514,9 @@ class C[T >: Null <: String] // define a type bound with unsafe conflict bound
 val n = nullOf[String] // apply a type bound unsafely
 ```
 
-Without the `unsafeNulls`, all these unsafe operations will not be type-checked.
+Without the [`unsafeNulls`](https://scala-lang.org/api/3.x/scala/runtime/stdLibPatches/language$$unsafeNulls$.html), all these unsafe operations will not be type-checked.
 
-`unsafeNulls` also works for extension methods and implicit search.
+[`unsafeNulls`](https://scala-lang.org/api/3.x/scala/runtime/stdLibPatches/language$$unsafeNulls$.html) also works for extension methods and implicit search.
 
 ```scala
 import scala.language.unsafeNulls
