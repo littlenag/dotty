@@ -1371,7 +1371,8 @@ class Namer { typer: Typer =>
 
 
       // Apply modifications by inherited inline traits
-
+      // inspect the body
+      // if a macro call try to expand the macro
 
 
       // Now handle deriving type class instances...

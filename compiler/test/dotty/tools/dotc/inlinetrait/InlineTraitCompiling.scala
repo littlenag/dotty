@@ -10,27 +10,6 @@ import dotty.tools.dotc.core.Contexts.{Context, ctx}
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-//object example {
-//  import scala.quoted._
-//
-//  def somemacroimpl(b: Expr[Boolean])(using Quotes): Expr[String] = {
-//    if (b.valueOrError)
-//      '{"true"}
-//    else
-//      '{"false"}
-//  }
-//
-//  inline def somemacro(inline b: Boolean): String =
-//    ${somemacroimpl('b)}
-//}
-//
-//object uses {
-//  import example._
-//
-//  somemacro(true)
-//}
-
-
 class InlineTraitCompiling extends DottyTest {
 
   private def newContext = {
@@ -56,8 +35,6 @@ class InlineTraitCompiling extends DottyTest {
       else
         '{"false"}
     }
-
-
   }
 
         """,
@@ -90,8 +67,6 @@ class InlineTraitCompiling extends DottyTest {
         //assertEquals("trait Too", bar.symbol.owner.show)
       }
     }
-
-
   }
 
   @Test
@@ -101,77 +76,32 @@ class InlineTraitCompiling extends DottyTest {
 
       import scala.quoted._
 
-      // Should return a TraitBody, but Any will work for today
-      def traitBody(b: Expr[Boolean])(using Quotes): Expr[Any] = {
-        if (b.valueOrError)
-          // inject a method named foo: Int = 1
-          // have to quote to capture the AST
-          '{def foo: Int = 1}
-        else
-          // inject a method named bar: String = "1"
-          '{def bar: String = "1"}
+      // Probably need to inject a marker trait in there somehow
+      trait IfTrueThenFooElseBar {
+
       }
 
-      inline trait IfTrueThenFooElseBar(inline b: Boolean) { self =>
-        // as with inline defs we call a static method returning an Expr[T]
-        // maybe want this to be a StatementMod?
-        $${traitBody('b)}
+      object IfTrueThenFooElseBar {
+        // Would return mods to the class body in `template`
+        // If the whole template changes, then that could be its own "unsafe" mod. That means
+        // there is no reason to just have everything return Expr[Any] all the time.
+        def evolved(b: Expr[Boolean])(template: Expr[Any])(using Quotes): TemplateMod = {
+          if (b.valueOrError)
+            Modification.mixin('{def foo: Int = 1})
+          else
+            Modification.mixin('{def bar: String = "1"})
+        }
       }
 
-        """,
+        """, // grows becomes develops acquires evolves
       s"""
-         | object ExpectMethodFoo extends IfTrueThenFooElseBar(true)
+         | class ExpectMethodFoo __evolves IfTrueThenFooElseBar(true) {
+         |    def maybeBaz = Option("fizz")
+         | }
          |""".stripMargin
     )
 
     println("Inline Trait Test")
-
-    /**
-     * expanding an inline trait will have to happen within
-     * the typer itself, much like the deriving clause works.
-     *
-     * trying after the typer will fail type checking
-     *
-     * pre-typer can't work, because you'll want expansion to happen
-     * with values having inferred types
-     *
-     * interaction with derived? expansion should occur first
-     *
-     * goals:
-     *   - inject one of two methods into a class depending on the type parameter
-     *   - some way to take the class body as input during expansion
-     *   - some way to append instructions to be evaluation during class expansion
-     *   - annotations -> inline traits
-     *   - case class A -> repr -> case class B
-     *
-     *
-     * inline needs to work something like a Template => Template lambda
-     *
-     * can an inline trait
-     *   - extend interfaces? probably should
-     *   - declare regular defs and vals? probably should
-     *   - be matchable? maybe?
-     *   - open, final methods, denote methods open for re-writing? private open? new modifier?
-     *     - soft keyword?
-     *
-     *
-     *  add/remove/rename/restructure methods as a function of literal arguments and types
-     *
-     *  what is the execution model?
-     *    - are all types fully known before executing the modifiers?
-     *
-     *  Use @specialized to mark a method that may be transformed by an inline trait
-     *  by whose name will name the same
-     *  @specialized def foo: Any
-     *
-     *  Use `erased` to indicate input vals, defs, and types?
-     *
-     *  input object pattern? declare an erased object named `args` that the
-     *  trait can take as input?
-     *
-     *  do we want templates and macros?
-     *
-     */
 
     checkCompile("typer", sources) { (tree, context) =>
       given Context = context
