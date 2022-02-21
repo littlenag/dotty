@@ -18,7 +18,7 @@ import com.vladsch.flexmark.formatter.Formatter
 
 import scala.collection.JavaConverters._
 
-val docsRootDRI: DRI = DRI(location = "docs/index", symbolUUID = staticFileSymbolUUID)
+val docsRootDRI: DRI = DRI(location = "_docs/index", symbolUUID = staticFileSymbolUUID)
 val apiPageDRI: DRI = DRI(location = "api/index")
 
 def defaultMarkdownOptions(using ctx: StaticSiteContext): DataHolder =
@@ -58,7 +58,7 @@ final val LineSeparator = "\n"
 
 def yamlParser(using ctx: StaticSiteContext): Parser = Parser.builder(defaultMarkdownOptions).build()
 
-def loadTemplateFile(file: File)(using ctx: StaticSiteContext): TemplateFile = {
+def loadTemplateFile(file: File, defaultTitle: Option[TemplateName] = None)(using ctx: StaticSiteContext): TemplateFile = {
   val lines = Files.readAllLines(file.toPath).asScala.toList
 
   val (config, content) = if (lines.head == ConfigSeparator) {
@@ -105,7 +105,7 @@ def loadTemplateFile(file: File)(using ctx: StaticSiteContext): TemplateFile = {
     rawCode = content.mkString(LineSeparator),
     settings = settings,
     name = name,
-    title = stringSetting(allSettings, "title").map(TemplateName.YamlDefined(_)).getOrElse(TemplateName.FilenameDefined(name)),
+    title = stringSetting(allSettings, "title").map(TemplateName.YamlDefined(_)).orElse(defaultTitle).getOrElse(TemplateName.FilenameDefined(name)),
     hasFrame = !stringSetting(allSettings, "hasFrame").contains("false"),
     resources = (listSetting(allSettings, "extraCSS") ++ listSetting(allSettings, "extraJS")).flatten.toList,
     layout = stringSetting(allSettings, "layout"),

@@ -249,11 +249,11 @@ object Parsers {
 
     /** Skip on error to next safe point.
      */
-    protected def skip(): Unit =
+    protected def skip(stopAtComma: Boolean): Unit =
       val lastRegion = in.currentRegion
       def atStop =
         in.token == EOF
-        || skipStopTokens.contains(in.token) && (in.currentRegion eq lastRegion)
+        || ((stopAtComma && in.token == COMMA) || skipStopTokens.contains(in.token)) && (in.currentRegion eq lastRegion)
       while !atStop do
         in.nextToken()
       lastErrorOffset = in.offset
@@ -278,7 +278,13 @@ object Parsers {
       if (in.token == EOF) incompleteInputError(msg)
       else
         syntaxError(msg, offset)
-        skip()
+        skip(stopAtComma = true)
+
+    def syntaxErrorOrIncomplete(msg: Message, span: Span): Unit =
+      if (in.token == EOF) incompleteInputError(msg)
+      else
+        syntaxError(msg, span)
+        skip(stopAtComma = true)
 
     /** Consume one token of the specified type, or
       * signal an error if it is not there.
@@ -346,7 +352,7 @@ object Parsers {
             false // it's a statement that might be legal in an outer context
           else
             in.nextToken() // needed to ensure progress; otherwise we might cycle forever
-            skip()
+            skip(stopAtComma=false)
             true
 
       in.observeOutdented()
@@ -377,7 +383,7 @@ object Parsers {
       false
     }
 
-    def errorTermTree: Literal = atSpan(in.offset) { Literal(Constant(null)) }
+    def errorTermTree(start: Offset): Literal = atSpan(start, in.offset, in.offset) { Literal(Constant(null)) }
 
     private var inFunReturnType = false
     private def fromWithinReturnType[T](body: => T): T = {
@@ -881,7 +887,8 @@ object Parsers {
       val next = in.lookahead.token
       next == LBRACKET || next == LPAREN
 
-    /** Is current ident a `*`, and is it followed by a `)` or `, )`? */
+    /** Is current ident a `*`, and is it followed by a `)`, `, )`, `,EOF`? The latter two are not
+        syntactically valid, but we need to include them here for error recovery. */
     def followingIsVararg(): Boolean =
       in.isIdent(nme.raw.STAR) && {
         val lookahead = in.LookaheadScanner()
@@ -890,7 +897,7 @@ object Parsers {
         || lookahead.token == COMMA
            && {
              lookahead.nextToken()
-             lookahead.token == RPAREN
+             lookahead.token == RPAREN || lookahead.token == EOF
            }
       }
 
@@ -1930,7 +1937,7 @@ object Parsers {
               PolyFunction(tparams, body)
             else {
               syntaxError("Implementation restriction: polymorphic function literals must have a value parameter", arrowOffset)
-              errorTermTree
+              errorTermTree(arrowOffset)
             }
           }
         case _ =>
@@ -2002,7 +2009,7 @@ object Parsers {
           handler match {
             case Block(Nil, EmptyTree) =>
               assert(handlerStart != -1)
-              syntaxError(
+              syntaxErrorOrIncomplete(
                 EmptyCatchBlock(body),
                 Span(handlerStart, endOffset(handler))
               )
@@ -2297,8 +2304,9 @@ object Parsers {
             in.nextToken()
             simpleExpr(location)
           else
+            val start = in.lastOffset
             syntaxErrorOrIncomplete(IllegalStartSimpleExpr(tokenString(in.token)), expectedOffset)
-            errorTermTree
+            errorTermTree(start)
       }
       simpleExprRest(t, location, canApply)
     }
@@ -2737,8 +2745,9 @@ object Parsers {
       case _ =>
         if (isLiteral) literal(inPattern = true)
         else {
+          val start = in.lastOffset
           syntaxErrorOrIncomplete(IllegalStartOfSimplePattern(), expectedOffset)
-          errorTermTree
+          errorTermTree(start)
         }
     }
 
@@ -3313,8 +3322,9 @@ object Parsers {
           }
           val rhs2 =
             if rhs.isEmpty && !isAllIds then
+              val start = in.lastOffset
               syntaxError(ExpectedTokenButFound(EQUALS, in.token), Span(in.lastOffset))
-              errorTermTree
+              errorTermTree(start)
             else
               rhs
           PatDef(mods, lhs, tpt, rhs2)
@@ -3484,11 +3494,12 @@ object Parsers {
         case GIVEN =>
           givenDef(start, mods, atSpan(in.skipToken()) { Mod.Given() })
         case _ =>
+          val start = in.lastOffset
           syntaxErrorOrIncomplete(ExpectedStartOfTopLevelDefinition())
           mods.annotations match {
             case head :: Nil => head
             case Nil => EmptyTree
-            case all => Block(all, errorTermTree)
+            case all => Block(all, errorTermTree(start))
           }
       }
 

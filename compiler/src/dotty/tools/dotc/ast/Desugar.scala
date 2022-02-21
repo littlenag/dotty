@@ -520,7 +520,11 @@ object desugar {
           enumCases.last.pushAttachment(DesugarEnums.DefinesEnumLookupMethods, ())
         val enumCompanionRef = TermRefTree()
         val enumImport =
-          Import(enumCompanionRef, enumCases.flatMap(caseIds).map(ImportSelector(_)))
+          Import(enumCompanionRef, enumCases.flatMap(caseIds).map(
+            enumCase => 
+              ImportSelector(enumCase.withSpan(enumCase.span.startPos))
+            ) 
+          )
         (enumImport :: enumStats, enumCases, enumCompanionRef)
       }
       else (stats, Nil, EmptyTree)
@@ -693,23 +697,11 @@ object desugar {
     // For all other classes, the parent is AnyRef.
     val companions =
       if (isCaseClass) {
-
-        // true if access to the apply method has to be restricted
-        // i.e. if the case class constructor is either private or qualified private
-        def restrictedAccess = {
-          val mods = constr1.mods
-          mods.is(Private) || (!mods.is(Protected) && mods.hasPrivateWithin)
-        }
-
         val applyMeths =
           if (mods.is(Abstract)) Nil
           else {
-            val copiedFlagsMask = copiedAccessFlags & Private
-            val appMods = {
-              val mods = Modifiers(Synthetic | constr1.mods.flags & copiedFlagsMask)
-              if (restrictedAccess) mods.withPrivateWithin(constr1.mods.privateWithin)
-              else mods
-            }
+            val appMods =
+              Modifiers(Synthetic | constr1.mods.flags & copiedAccessFlags).withPrivateWithin(constr1.mods.privateWithin)
             val appParamss =
               derivedVparamss.nestedZipWithConserve(constrVparamss)((ap, cp) =>
                 ap.withMods(ap.mods | (cp.mods.flags & HasDefault)))
@@ -1139,10 +1131,11 @@ object desugar {
           ) // no `_`
 
       val ids = for ((named, _) <- vars) yield Ident(named.name)
-      val caseDef = CaseDef(pat, EmptyTree, makeTuple(ids))
       val matchExpr =
         if (tupleOptimizable) rhs
-        else Match(makeSelector(rhs, MatchCheck.IrrefutablePatDef), caseDef :: Nil)
+        else
+          val caseDef = CaseDef(pat, EmptyTree, makeTuple(ids)) 
+          Match(makeSelector(rhs, MatchCheck.IrrefutablePatDef), caseDef :: Nil)
       vars match {
         case Nil if !mods.is(Lazy) =>
           matchExpr
@@ -1154,7 +1147,7 @@ object desugar {
             mods & Lazy | Synthetic | (if (ctx.owner.isClass) PrivateLocal else EmptyFlags)
           val firstDef =
             ValDef(tmpName, TypeTree(), matchExpr)
-              .withSpan(pat.span.union(rhs.span)).withMods(patMods)
+              .withSpan(pat.span.startPos).withMods(patMods)
           val useSelectors = vars.length <= 22
           def selector(n: Int) =
             if useSelectors then Select(Ident(tmpName), nme.selectorName(n))
@@ -1162,8 +1155,16 @@ object desugar {
           val restDefs =
             for (((named, tpt), n) <- vars.zipWithIndex if named.name != nme.WILDCARD)
             yield
-              if (mods.is(Lazy)) derivedDefDef(original, named, tpt, selector(n), mods &~ Lazy)
-              else derivedValDef(original, named, tpt, selector(n), mods)
+              if mods.is(Lazy) then 
+                DefDef(named.name.asTermName, Nil, tpt, selector(n))
+                  .withMods(mods &~ Lazy)
+                  .withSpan(named.span)
+              else 
+                valDef(
+                  ValDef(named.name.asTermName, tpt, selector(n))
+                    .withMods(mods)
+                    .withSpan(named.span)
+                )
           flatTree(firstDef :: restDefs)
       }
   }
