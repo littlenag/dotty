@@ -3115,11 +3115,10 @@ object Parsers {
 
     type ImportConstr = (Tree, List[ImportSelector]) => Tree
 
-    /** Import  ::= `import' ImportExpr {‘,’ ImportExpr}
-     *  Export  ::= `export' ImportExpr {‘,’ ImportExpr}
+    /** Import ::= `import' ImportExpr {‘,’ ImportExpr}
      */
-    def importClause(leading: Token, mkTree: ImportConstr): List[Tree] = {
-      val offset = accept(leading)
+    def importClause(mkTree: ImportConstr): List[Tree] = {
+      val offset = accept(IMPORT)
       commaSeparated(importExpr(mkTree)) match {
         case t :: rest =>
           // The first import should start at the start offset of the keyword.
@@ -3129,6 +3128,26 @@ object Parsers {
           t.withSpan(firstPos) :: rest
         case nil => nil
       }
+    }
+
+    /** Export       ::= `export' ImportExpr {‘,’ ImportExpr}
+     *  ExportMacro  ::= `export' ‘$’ ‘{’ Block ‘}’
+     */
+    def exportClause(): List[Tree] = {
+      val offset = accept(EXPORT)
+
+      if isSplice then
+        List(ExportMacro(splice(false), EmptyTree))
+      else
+        commaSeparated(importExpr(Export(_,_))) match {
+          case t :: rest =>
+            // The first import should start at the start offset of the keyword.
+            val firstPos =
+              if (t.span.exists) t.span.withStart(offset)
+              else Span(offset, in.lastOffset)
+            t.withSpan(firstPos) :: rest
+          case nil => nil
+        }
     }
 
     /** Create an import node and handle source version imports */
@@ -3855,10 +3874,10 @@ object Parsers {
           }
           else stats += packaging(start)
         }
-        else if (in.token == IMPORT)
-          stats ++= importClause(IMPORT, mkImport(outermost))
-        else if (in.token == EXPORT)
-          stats ++= importClause(EXPORT, Export(_,_))
+        else if in.token == IMPORT then
+          stats ++= importClause(mkImport(outermost))
+        else if in.token == EXPORT then
+          stats ++= exportClause()
         else if isIdent(nme.extension) && followingIsExtension() then
           stats += extension()
         else if isDefIntro(modifierTokens) then
@@ -3903,10 +3922,10 @@ object Parsers {
       end if
       while
         var empty = false
-        if (in.token == IMPORT)
-          stats ++= importClause(IMPORT, mkImport())
-        else if (in.token == EXPORT)
-          stats ++= importClause(EXPORT, Export(_,_))
+        if in.token == IMPORT then
+          stats ++= importClause(mkImport())
+        else if in.token == EXPORT then
+          stats ++= exportClause()
         else if isIdent(nme.extension) && followingIsExtension() then
           stats += extension()
         else if (isDefIntro(modifierTokensOrCase))
@@ -3982,7 +4001,7 @@ object Parsers {
       while
         var empty = false
         if (in.token == IMPORT)
-          stats ++= importClause(IMPORT, mkImport())
+          stats ++= importClause(mkImport())
         else if (isExprIntro)
           stats += expr(Location.InBlock)
         else if in.token == IMPLICIT && !in.inModifierPosition() then

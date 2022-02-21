@@ -409,6 +409,7 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
     else new DerivingTemplate(constr, parents ++ derived, self, body, derived.length)
   def Import(expr: Tree, selectors: List[ImportSelector])(implicit src: SourceFile): Import = new Import(expr, selectors)
   def Export(expr: Tree, selectors: List[ImportSelector])(implicit src: SourceFile): Export = new Export(expr, selectors)
+  def ExportMacro(expr: Tree, expansion: Tree)(implicit src: SourceFile): ExportMacro = new ExportMacro(expr, expansion)
   def PackageDef(pid: RefTree, stats: List[Tree])(implicit src: SourceFile): PackageDef = new PackageDef(pid, stats)
   def Annotated(arg: Tree, annot: Tree)(implicit src: SourceFile): Annotated = new Annotated(arg, annot)
 

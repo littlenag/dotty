@@ -2,20 +2,33 @@ package dotty.tools
 package dotc
 package ast
 
-import core._
-import Types._, Names._, NameOps._, Flags._, util.Spans._, Contexts._, Constants._
-import typer.{ ConstFold, ProtoTypes }
-import SymDenotations._, Symbols._, Denotations._, StdNames._, Comments._
+import core.*
+import Types.*
+import Names.*
+import NameOps.*
+import Flags.*
+import util.Spans.*
+import Contexts.*
+import Constants.*
+import typer.{ConstFold, ProtoTypes}
+import SymDenotations.*
+import Symbols.*
+import Denotations.*
+import StdNames.*
+import Comments.*
+
 import language.higherKinds
 import collection.mutable.ListBuffer
 import printing.Printer
 import printing.Texts.Text
-import util.{Stats, Attachment, Property, SourceFile, NoSource, SrcPos, SourcePosition}
+import util.{Attachment, NoSource, Property, SourceFile, SourcePosition, SrcPos, Stats}
 import config.Config
+
 import annotation.internal.sharable
 import annotation.unchecked.uncheckedVariance
 import annotation.constructorOnly
-import Decorators._
+import Decorators.*
+import dotty.tools.dotc.ast.untpd.Tree
 
 object Trees {
 
@@ -898,6 +911,15 @@ object Trees {
       type ThisTree[-T >: Untyped] = Export[T]
   }
 
+  /** export ${...}
+   *  from a splice. All exportable statements from the spliced object are selected via *.
+   */
+  case class ExportMacro[-T >: Untyped] private[ast] (call: Tree[T], expansion: Tree[T])(implicit @constructorOnly src: SourceFile)
+    extends Tree[T] {
+    type ThisTree[-T >: Untyped] = ExportMacro[T]
+    def selectors: List[untpd.ImportSelector] = List(untpd.ImportSelector(Ident(nme.WILDCARD)(NoSource))(NoSource))
+  }
+
   /** package pid { stats } */
   case class PackageDef[-T >: Untyped] private[ast] (pid: RefTree[T], stats: List[Tree[T]])(implicit @constructorOnly src: SourceFile)
     extends ProxyTree[T] with WithEndMarker[T] {
@@ -1100,6 +1122,7 @@ object Trees {
     type Template = Trees.Template[T]
     type Import = Trees.Import[T]
     type Export = Trees.Export[T]
+    type ExportMacro = Trees.ExportMacro[T]
     type ImportOrExport = Trees.ImportOrExport[T]
     type PackageDef = Trees.PackageDef[T]
     type Annotated = Trees.Annotated[T]
