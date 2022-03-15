@@ -902,6 +902,15 @@ object Trees {
     type ThisTree[-T >: Untyped] = Import[T]
   }
 
+//  /** import ${...}.selectors
+//   *  from a splice. selectors follow normal rules. if the selector is empty then * selector is assumed
+//   */
+//  case class ImportMacro[-T >: Untyped] private[ast] (expr: Tree[T], selectors: List[untpd.ImportSelector])(implicit @constructorOnly src: SourceFile)
+//    extends Tree[T] {
+//    type ThisTree[-T >: Untyped] = ImportMacro[T]
+//    //def selectors: List[untpd.ImportSelector] = List(untpd.ImportSelector(Ident(nme.WILDCARD)(NoSource))(NoSource))
+//  }
+
   /** export expr.selectors
    *  where a selector is either an untyped `Ident`, `name` or
    *  an untyped thicket consisting of `name` and `rename`.
@@ -914,10 +923,10 @@ object Trees {
   /** export ${...}
    *  from a splice. All exportable statements from the spliced object are selected via *.
    */
-  case class ExportMacro[-T >: Untyped] private[ast] (call: Tree[T], expansion: Tree[T])(implicit @constructorOnly src: SourceFile)
+  case class ExportMacro[-T >: Untyped] private[ast] (call: Tree[T])(implicit @constructorOnly src: SourceFile)
     extends Tree[T] {
     type ThisTree[-T >: Untyped] = ExportMacro[T]
-    def selectors: List[untpd.ImportSelector] = List(untpd.ImportSelector(Ident(nme.WILDCARD)(NoSource))(NoSource))
+    //def selectors: List[untpd.ImportSelector] = List(untpd.ImportSelector(Ident(nme.WILDCARD)(NoSource))(NoSource))
   }
 
   /** package pid { stats } */
@@ -1121,6 +1130,7 @@ object Trees {
     type TypeDef = Trees.TypeDef[T]
     type Template = Trees.Template[T]
     type Import = Trees.Import[T]
+    //type ImportMacro = Trees.ImportMacro[T]
     type Export = Trees.Export[T]
     type ExportMacro = Trees.ExportMacro[T]
     type ImportOrExport = Trees.ImportOrExport[T]
@@ -1338,9 +1348,17 @@ object Trees {
         case tree: Import if (expr eq tree.expr) && (selectors eq tree.selectors) => tree
         case _ => finalize(tree, untpd.Import(expr, selectors)(sourceFile(tree)))
       }
+//      def ImportMacro(tree: Tree)(call: Tree)(using Context): ImportMacro = tree match {
+//        case tree: ImportMacro if (call eq tree.call) => tree
+//        case _ => finalize(tree, untpd.ImportMacro(call)(sourceFile(tree)))
+//      }
       def Export(tree: Tree)(expr: Tree, selectors: List[untpd.ImportSelector])(using Context): Export = tree match {
         case tree: Export if (expr eq tree.expr) && (selectors eq tree.selectors) => tree
         case _ => finalize(tree, untpd.Export(expr, selectors)(sourceFile(tree)))
+      }
+      def ExportMacro(tree: Tree)(call: Tree)(using Context): ExportMacro = tree match {
+        case tree: ExportMacro if (call eq tree.call) => tree
+        case _ => finalize(tree, untpd.ExportMacro(call)(sourceFile(tree)))
       }
       def PackageDef(tree: Tree)(pid: RefTree, stats: List[Tree])(using Context): PackageDef = tree match {
         case tree: PackageDef if (pid eq tree.pid) && (stats eq tree.stats) => tree
@@ -1492,8 +1510,12 @@ object Trees {
               cpy.Template(tree)(transformSub(constr), transform(tree.parents), Nil, transformSub(self), transformStats(tree.body, tree.symbol))
             case Import(expr, selectors) =>
               cpy.Import(tree)(transform(expr), selectors)
+//            case ImportMacro(call) =>
+//              cpy.ImportMacro(tree)(transform(call))
             case Export(expr, selectors) =>
               cpy.Export(tree)(transform(expr), selectors)
+            case ExportMacro(call) =>
+              cpy.ExportMacro(tree)(transform(call))
             case PackageDef(pid, stats) =>
               val pid1 = transformSub(pid)
               inContext(localCtx(tree)) {
@@ -1635,8 +1657,12 @@ object Trees {
               this(this(this(this(x, constr), parents), self), tree.body)
             case Import(expr, _) =>
               this(x, expr)
+//            case ImportMacro(call) =>
+//              this(x, call)
             case Export(expr, _) =>
               this(x, expr)
+            case ExportMacro(call) =>
+              this(x, call)
             case PackageDef(pid, stats) =>
               this(this(x, pid), stats)(using localCtx(tree))
             case Annotated(arg, annot) =>

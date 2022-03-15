@@ -75,9 +75,9 @@ trait QuotesAndSplices {
     }
 
   /** Translate `${ t: Expr[T] }` into expression `t.splice` while tracking the quotation level in the context */
-  def typedSplice(tree: untpd.Splice, pt: Type)(using Context): Tree = {
+  def typedSplice(tree: untpd.Splice, pt: Type, inImportExport: Boolean = false)(using Context): Tree = {
     record("typedSplice")
-    checkSpliceOutsideQuote(tree)
+    checkSpliceOutsideQuote(tree, inImportExport)
     tree.expr match {
       case untpd.Quote(innerExpr) if innerExpr.isTerm =>
         report.warning("Canceled quote directly inside a splice. ${ '{ XYZ } } is equivalent to XYZ.", tree.srcPos)
@@ -106,7 +106,10 @@ trait QuotesAndSplices {
           else if (c.owner.isInlineTrait) c.owner.setFlag(Macro)
           else if (!c.outer.owner.is(Package)) markAsMacro(c.outer)
           else assert(ctx.reporter.hasErrors) // Did not find inline def to mark as macro
-        markAsMacro(ctx)
+        if (inImportExport)
+          ctx.owner.setFlag(Macro)
+        else
+          markAsMacro(ctx)
       }
 
       val (outerQctx, ctx1) = popQuotes()
@@ -195,8 +198,9 @@ trait QuotesAndSplices {
         using spliceContext.retractMode(Mode.QuotedPattern).withOwner(spliceOwner(ctx)))
     pat.select(tpnme.Underlying)
 
-  private def checkSpliceOutsideQuote(tree: untpd.Tree)(using Context): Unit =
-    if (level == 0 && !ctx.owner.ownersIterator.exists(_.is(Inline)))
+  private def checkSpliceOutsideQuote(tree: untpd.Tree, inImportExportMacro: Boolean = false)(using Context): Unit =
+    report.echo(s"checkSpliceOutsideQuote ${inImportExportMacro} show: ${tree.show} ${ctx.owner}\n")
+    if (level == 0 && !(ctx.owner.ownersIterator.exists(_.is(Inline)) || inImportExportMacro))
       report.error("Splice ${...} outside quotes '{...} or inline method", tree.srcPos)
     else if (level < 0)
       report.error(

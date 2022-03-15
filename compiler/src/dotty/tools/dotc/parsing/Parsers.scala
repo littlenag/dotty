@@ -227,6 +227,8 @@ object Parsers {
     /** A '$' identifier is treated as a splice if followed by a `{`.
      *  A longer identifier starting with `$` is treated as a splice/id combination
      *  in a quoted block '{...'
+     *
+     *  Unless you have an import/export macro...
      */
     def isSplice: Boolean =
       in.token == IDENTIFIER && in.name(0) == '$' && {
@@ -3137,7 +3139,7 @@ object Parsers {
       val offset = accept(EXPORT)
 
       if isSplice then
-        List(ExportMacro(splice(false), EmptyTree))
+        List(ExportMacro(splice(false)))
       else
         commaSeparated(importExpr(Export(_,_))) match {
           case t :: rest =>
@@ -3171,6 +3173,7 @@ object Parsers {
 
     /** ImportExpr       ::=  SimpleRef {‘.’ id} ‘.’ ImportSpec
      *                     |  SimpleRef ‘as’ id
+     *                     |  Splice
      *  ImportSpec       ::=  NamedSelector
      *                     |  WildcardSelector
      *                     | ‘{’ ImportSelectors ‘}’
@@ -3265,7 +3268,15 @@ object Parsers {
                   mkTree(qual, namedSelector(atSpan(start) { Ident(name) }) :: Nil)
       end importSelection
 
-      () => atSpan(in.offset) { importSelection(simpleRef()) }
+      () => atSpan(in.offset) {
+        importSelection(
+          // TODO{mk} allow simplified syntax here
+          if isSplice then
+            splice(false)
+          else
+            simpleRef()
+        )
+      }
     end importExpr
 
     /** Def      ::= val PatDef

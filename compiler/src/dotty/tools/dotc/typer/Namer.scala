@@ -390,6 +390,9 @@ class Namer { typer: Typer =>
         ctx
       case imp: Import =>
         ctx.importContext(imp, createSymbol(imp))
+      case exp: ExportMacro =>
+        println("indexExpanded")
+        ctx.exportMacroContext(exp, createSymbol(exp))
       case mdef: DefTree =>
         val sym = createSymbol(mdef)
         enterSymbol(sym)

@@ -599,6 +599,8 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
         keywordText("import ") ~ importText(expr, selectors)
       case Export(expr, selectors) =>
         keywordText("export ") ~ importText(expr, selectors)
+      case ExportMacro(call) =>
+        keywordText("export ") ~ toText(call)
       case ExtMethods(paramss, mdefs) =>
         addParamssText(keywordText("extension "), paramss)
         ~ " " ~ (if mdefs.length == 1 then toText(mdefs.head) else blockText(mdefs))

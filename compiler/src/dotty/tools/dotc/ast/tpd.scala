@@ -1166,11 +1166,19 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
         pending match
           case stat :: rest =>
             val statCtx = stat match
-              case _: DefTree | _: ImportOrExport => ctx
+              case _: DefTree | _: ImportOrExport | _: ExportMacro => ctx
               case _ => ctx.exprContext(stat, exprOwner)
             val stat1 = op(stat)(using statCtx)
             val restCtx = stat match
-              case stat: Import => ctx.importContext(stat, stat.symbol)
+              case stat: Import =>
+                println("Triggered import context addition")
+                ctx.importContext(stat, stat.symbol)
+//              case stat: ImportMacro =>
+//                println("Triggered importmacro context addition")
+//                ctx.importMacroContext(stat, stat.symbol)
+              case stat: ExportMacro =>
+                println("Triggered exportmacro context addition")
+                ctx.exportMacroContext(stat, stat.symbol)
               case _ => ctx
             if stat1 eq stat then
               loop(mapped, unchanged, rest)(using restCtx)

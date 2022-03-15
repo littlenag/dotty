@@ -14,7 +14,7 @@ import Uniques._
 import ast.Trees._
 import ast.untpd
 import util.{NoSource, SimpleIdentityMap, SourceFile, HashSet, ReusableInstance}
-import typer.{Implicits, ImportInfo, Inliner, SearchHistory, SearchRoot, TypeAssigner, Typer, Nullables}
+import typer.{ExportMacroInfo, Implicits, ImportInfo, Inliner, SearchHistory, SearchRoot, TypeAssigner, Typer, Nullables}
 import Nullables._
 import Implicits.ContextualImplicits
 import config.Settings._
@@ -54,8 +54,9 @@ object Contexts {
   private val (notNullInfosLoc,     store8) = store7.newLocation[List[NotNullInfo]]()
   private val (importInfoLoc,       store9) = store8.newLocation[ImportInfo]()
   private val (typeAssignerLoc,    store10) = store9.newLocation[TypeAssigner](TypeAssigner)
+  private val (exportMacroInfoLoc, store11) = store10.newLocation[ExportMacroInfo]()
 
-  private val initialStore = store10
+  private val initialStore = store11
 
   /** The current context */
   inline def ctx(using ctx: Context): Context = ctx
@@ -238,6 +239,9 @@ object Contexts {
     /** The currently active import info */
     def importInfo = store(importInfoLoc)
 
+    /** The currently active export macro info */
+    def exportMacroInfo = store(exportMacroInfoLoc)
+
     /** The current type assigner or typer */
     def typeAssigner: TypeAssigner = store(typeAssignerLoc)
 
@@ -408,6 +412,12 @@ object Contexts {
       && (outer ne NoContext)
       && (this.importInfo ne outer.importInfo)
 
+    /** Is this a context that introduces an export macro clause? */
+    def isExportMacroContext: Boolean =
+      (this ne NoContext)
+        && (outer ne NoContext)
+        && (this.exportMacroInfo ne outer.exportMacroInfo)
+
     /** Is this a context that introduces a non-empty scope? */
     def isNonEmptyScopeContext: Boolean =
       (this.scope ne outer.scope) && !this.scope.isEmpty
@@ -484,6 +494,18 @@ object Contexts {
     /** A new context that summarizes an import statement */
     def importContext(imp: Import[?], sym: Symbol): FreshContext =
       fresh.setImportInfo(ImportInfo(sym, imp.selectors, imp.expr))
+
+    /** A new context that summarizes an export macro statement */
+//    def importMacroContext(em: ImportMacro[?], sym: Symbol): FreshContext = {
+//      println("importMacroContext called")
+//      fresh.setImportMacroInfo(ImportMacroInfo(sym, em.call))
+//    }
+
+    /** A new context that summarizes an export macro statement */
+    def exportMacroContext(em: ExportMacro[?], sym: Symbol): FreshContext = {
+      println("exportMacroContext called")
+      fresh.setExportMacroInfo(ExportMacroInfo(sym, em.call))
+    }
 
     def scalaRelease: ScalaRelease =
       val releaseName = base.settings.YscalaRelease.value
@@ -670,6 +692,8 @@ object Contexts {
           setMode(this.mode | Mode.SafeNulls)
         case _ =>
       updateStore(importInfoLoc, importInfo)
+    def setExportMacroInfo(exportInfo: ExportMacroInfo): this.type =
+      updateStore(exportMacroInfoLoc, exportInfo)
     def setTypeAssigner(typeAssigner: TypeAssigner): this.type = updateStore(typeAssignerLoc, typeAssigner)
 
     def setProperty[T](key: Key[T], value: T): this.type =

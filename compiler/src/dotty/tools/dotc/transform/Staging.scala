@@ -18,7 +18,7 @@ import dotty.tools.dotc.util.{SourceFile, SrcPos}
 import dotty.tools.dotc.transform.SymUtils._
 import dotty.tools.dotc.transform.TreeMapWithStages._
 import dotty.tools.dotc.typer.Implicits.SearchFailureType
-//import dotty.tools.dotc.typer.Inliner
+import dotty.tools.dotc.typer.Inliner
 
 import scala.collection.mutable
 

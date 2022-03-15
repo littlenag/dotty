@@ -1,6 +1,20 @@
 Expanded Metaprogramming
 ========================
 
+make symmetric so macros work with both import and export
+
+disallow at top-level, only allow in template bodies
+
+make full splice syntax optional, eg
+
+import $someMacro(..)._ 
+
+instead of
+
+import ${someMacro(..)}._
+
+concise syntax works better with selectors anyway
+
 ## Overview
 
 Scala 3 introduces a new macro system that replaces the experimental Scala 2 system with one that

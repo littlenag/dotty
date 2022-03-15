@@ -359,7 +359,7 @@ private class ExtractDependenciesCollector extends tpd.TreeTraverser { thisTreeT
 
 
   /** Traverse the tree of a source file and record the dependencies and used names which
-   *  can be retrieved using `dependencies` and`usedNames`.
+   *  can be retrieved using `dependencies` and `usedNames`.
    */
   override def traverse(tree: Tree)(using Context): Unit = try {
     tree match {
@@ -391,6 +391,9 @@ private class ExtractDependenciesCollector extends tpd.TreeTraverser { thisTreeT
           val depContext = depContextOf(ctx.owner.lexicallyEnclosingClass)
           val from = resolveDependencySource
           _dependencies += ClassDependency(from, dep, depContext)
+      case exp @ ExportMacro(call) =>
+        // Same as done for Inlined
+        traverse(call)
       case t: TypeTree =>
         addTypeDependency(t.tpe)
       case ref: RefTree =>

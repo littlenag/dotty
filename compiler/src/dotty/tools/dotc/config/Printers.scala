@@ -44,7 +44,7 @@ object Printers {
   val subtyping = noPrinter
   val tailrec = noPrinter
   val transforms = noPrinter
-  val typr = new Printer
+  val typr = noPrinter
   val unapp = noPrinter
   val variances = noPrinter
 }

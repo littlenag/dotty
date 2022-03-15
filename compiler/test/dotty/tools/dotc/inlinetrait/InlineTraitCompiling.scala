@@ -19,7 +19,7 @@ class InlineTraitCompiling extends DottyTest {
 
   import tpd._
 
-  @Test
+  //@Test
   def expandMacro: Unit = {
     println("Expand Macro Test")
 
@@ -70,38 +70,36 @@ class InlineTraitCompiling extends DottyTest {
   }
 
   @Test
-  def inlineTraitSimple: Unit = {
+  def exportMacroSimple: Unit = {
     val sources = List(
       s"""
-
-      import scala.quoted._
-
-      // Probably need to inject a marker trait in there somehow
-      trait IfTrueThenFooElseBar {
-
-      }
-
-      object IfTrueThenFooElseBar {
-        // Would return mods to the class body in `template`
-        // If the whole template changes, then that could be its own "unsafe" mod. That means
-        // there is no reason to just have everything return Expr[Any] all the time.
-        def evolved(b: Expr[Boolean])(template: Expr[Any])(using Quotes): TemplateMod = {
-          if (b.valueOrError)
-            Modification.mixin('{def foo: Int = 1})
-          else
-            Modification.mixin('{def bar: String = "1"})
-        }
-      }
-
-        """, // grows becomes develops acquires evolves
-      s"""
-         | class ExpectMethodFoo __evolves IfTrueThenFooElseBar(true) {
-         |    def maybeBaz = Option("fizz")
-         | }
-         |""".stripMargin
+          | import scala.quoted._
+          |
+          | object TestMacro {
+          |   def dothis(b: Boolean)(using Quotes): Expr[Any] = {
+          |     if (b)
+          |       '{
+          |         object fizzle {
+          |           def withFizzle = 12
+          |         }
+          |       }
+          |     else
+          |       '{
+          |         object swizzle {
+          |           def withSwizzle = "swizzle"
+          |         }
+          |       }
+          |   }
+          |
+          | }
+          |
+          | class Foo {
+          |   export $${TestMacro.dothis(true)}
+          | }
+        """.stripMargin
     )
 
-    println("Inline Trait Test")
+    println("Export Macro Test")
 
     checkCompile("typer", sources) { (tree, context) =>
       given Context = context
@@ -117,22 +115,3 @@ class InlineTraitCompiling extends DottyTest {
   }
 }
 
-    // inline trait Fizz(inline b: Boolean) { self =>
-    //   // want a shortcut for this kind of syntax
-    //   inline if (b) {
-    //     //erased val sc = summon[StatementContext]
-    //     // treat as an erased value
-    //     //given StatementContext = this
-    //     // shortcut could be what?
-
-    //     // other keywords to leverage?
-    //     //export
-    //     //extension
-
-    //     // how to lift a statement and turn it into data?
-
-    //     def[this] foo: Int = 1
-    //   } else {
-    //     def[this] bar: String = "1"
-    //   }
-    // }
