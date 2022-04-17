@@ -594,12 +594,6 @@ class TreePickler(pickler: TastyPickler) {
             pickleTree(expr)
             pickleSelectors(selectors)
           }
-        case ExportMacro(call) =>
-          writeByte(EXPORT)
-          writeByte(MACRO)
-          withLength {
-            pickleTree(call)
-          }
         case PackageDef(pid, stats) =>
           writeByte(PACKAGE)
           withLength { pickleType(pid.tpe); pickleStats(stats) }

@@ -236,7 +236,13 @@ object Parsers {
         else (staged & StageKind.Quoted) != 0
       }
 
-/* ------------- ERROR HANDLING ------------------------------------------- */
+    /**
+     * Accept either ${..} or $foo(..)
+     */
+    def isImportExportSplice: Boolean =
+      in.token == IDENTIFIER && in.name(0) == '$'
+
+    /* ------------- ERROR HANDLING ------------------------------------------- */
 
     /** Is offset1 less or equally indented than offset2?
      *  This is the case if the characters between the preceding end-of-line and offset1
@@ -1596,6 +1602,25 @@ object Parsers {
             id
           }
         if (isType) TypSplice(expr) else Splice(expr)
+      }
+
+    /** ImportExportSplice  ::=  ‘$’ ‘{’ Block ‘}’  | ‘$’ Id [ ‘.’ Id ]* ‘(’ Args ‘)’
+     */
+    def importExportSplice: Tree =
+      // TODO Accept either $b(..) or ${b(..)}
+      atSpan(in.offset) {
+        val expr =
+          if (in.name.length == 1) {
+            in.nextToken()
+            val inPattern = (staged & StageKind.QuotedPattern) != 0
+            withinStaged(StageKind.Spliced)(if (inPattern) inBraces(pattern()) else stagedBlock())
+          }
+          else atSpan(in.offset + 1) {
+            val id = Ident(in.name.drop(1))
+            in.nextToken()
+            id
+          }
+        Splice(expr)
       }
 
     /**  SimpleType      ::=  SimpleLiteral
@@ -3133,23 +3158,19 @@ object Parsers {
     }
 
     /** Export       ::= `export' ImportExpr {‘,’ ImportExpr}
-     *  ExportMacro  ::= `export' ‘$’ ‘{’ Block ‘}’
      */
     def exportClause(): List[Tree] = {
       val offset = accept(EXPORT)
 
-      if isSplice then
-        List(ExportMacro(splice(false)))
-      else
-        commaSeparated(importExpr(Export(_,_))) match {
-          case t :: rest =>
-            // The first import should start at the start offset of the keyword.
-            val firstPos =
-              if (t.span.exists) t.span.withStart(offset)
-              else Span(offset, in.lastOffset)
+      commaSeparated(importExpr(Export(_,_))) match {
+        case t :: rest =>
+          // The first import should start at the start offset of the keyword.
+          val firstPos =
+            if (t.span.exists) t.span.withStart(offset)
+            else Span(offset, in.lastOffset)
             t.withSpan(firstPos) :: rest
-          case nil => nil
-        }
+        case nil => nil
+      }
     }
 
     /** Create an import node and handle source version imports */
@@ -3173,7 +3194,7 @@ object Parsers {
 
     /** ImportExpr       ::=  SimpleRef {‘.’ id} ‘.’ ImportSpec
      *                     |  SimpleRef ‘as’ id
-     *                     |  Splice
+     *                     |  Splice ‘.’ ImportSpec
      *  ImportSpec       ::=  NamedSelector
      *                     |  WildcardSelector
      *                     | ‘{’ ImportSelectors ‘}’
@@ -3270,9 +3291,8 @@ object Parsers {
 
       () => atSpan(in.offset) {
         importSelection(
-          // TODO{mk} allow simplified syntax here
-          if isSplice then
-            splice(false)
+          if isImportExportSplice then
+            importExportSplice
           else
             simpleRef()
         )

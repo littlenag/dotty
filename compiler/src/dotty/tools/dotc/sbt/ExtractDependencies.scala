@@ -3,26 +3,26 @@ package sbt
 
 import java.io.File
 import java.util.{Arrays, EnumSet}
-
-import dotty.tools.dotc.ast.Trees._
+import dotty.tools.dotc.ast.Trees.*
 import dotty.tools.dotc.ast.tpd
-import dotty.tools.dotc.core.Contexts._
-import dotty.tools.dotc.core.Decorators._
-import dotty.tools.dotc.core.Flags._
-import dotty.tools.dotc.core.NameOps._
-import dotty.tools.dotc.core.Names._
-import dotty.tools.dotc.core.Phases._
-import dotty.tools.dotc.core.StdNames._
-import dotty.tools.dotc.core.Symbols._
+import dotty.tools.dotc.ast.untpd.Splice
+import dotty.tools.dotc.core.Contexts.*
+import dotty.tools.dotc.core.Decorators.*
+import dotty.tools.dotc.core.Flags.*
+import dotty.tools.dotc.core.NameOps.*
+import dotty.tools.dotc.core.Names.*
+import dotty.tools.dotc.core.Phases.*
+import dotty.tools.dotc.core.StdNames.*
+import dotty.tools.dotc.core.Symbols.*
 import dotty.tools.dotc.core.Denotations.StaleSymbol
-import dotty.tools.dotc.core.Types._
-import dotty.tools.dotc.transform.SymUtils._
-import dotty.tools.dotc.util.{SrcPos, NoSourcePosition}
+import dotty.tools.dotc.core.Types.*
+import dotty.tools.dotc.transform.SymUtils.*
+import dotty.tools.dotc.util.{NoSourcePosition, SrcPos}
 import dotty.tools.io
 import dotty.tools.io.{AbstractFile, PlainFile, ZipArchive}
 import xsbti.UseScope
 import xsbti.api.DependencyContext
-import xsbti.api.DependencyContext._
+import xsbti.api.DependencyContext.*
 
 import scala.collection.{Set, mutable}
 
@@ -391,9 +391,6 @@ private class ExtractDependenciesCollector extends tpd.TreeTraverser { thisTreeT
           val depContext = depContextOf(ctx.owner.lexicallyEnclosingClass)
           val from = resolveDependencySource
           _dependencies += ClassDependency(from, dep, depContext)
-      case exp @ ExportMacro(call) =>
-        // Same as done for Inlined
-        traverse(call)
       case t: TypeTree =>
         addTypeDependency(t.tpe)
       case ref: RefTree =>

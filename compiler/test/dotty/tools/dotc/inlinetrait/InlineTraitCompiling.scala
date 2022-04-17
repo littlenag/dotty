@@ -25,19 +25,16 @@ class InlineTraitCompiling extends DottyTest {
 
     List(
       s"""
-
-  import scala.quoted._
-
-  object ExpandMacro {
-    def somemacroimpl(b: Expr[Boolean])(using Quotes): Expr[String] = {
-      if (b.valueOrError)
-        '{"true"}
-      else
-        '{"false"}
-    }
-  }
-
-        """,
+         | import scala.quoted._
+         | object ExpandMacro {
+         |   def somemacroimpl(b: Expr[Boolean])(using Quotes): Expr[String] = {
+         |     if (b.valueOrError)
+         |       '{"true"}
+         |     else
+         |       '{"false"}
+         |   }
+         | }
+        """.stripMargin,
       s"""
          | object foo {
          |
@@ -69,7 +66,7 @@ class InlineTraitCompiling extends DottyTest {
     }
   }
 
-  @Test
+  //@Test
   def exportMacroSimple: Unit = {
     val sources = List(
       s"""
@@ -92,9 +89,11 @@ class InlineTraitCompiling extends DottyTest {
           |   }
           |
           | }
-          |
+        """,
+
+      s"""
           | class Foo {
-          |   export $${TestMacro.dothis(true)}
+          |  export $${TestMacro.dothis(true)}
           | }
         """.stripMargin
     )

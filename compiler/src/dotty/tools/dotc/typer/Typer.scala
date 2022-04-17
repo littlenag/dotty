@@ -2566,18 +2566,15 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
     assignType(cpy.Import(imp)(expr1, selectors1), sym)
 
   def typedExport(exp: untpd.Export)(using Context): Export =
-    val expr1 = typedExpr(exp.expr, AnySelectionProto)
+    val expr1 = exp.expr match {
+      case tree: untpd.Splice =>
+        typedSplice(tree, AnySelectionProto, true)
+      case other =>
+        typedExpr(other, AnySelectionProto)
+    }
     // already called `checkLegalExportPath` in Namer
     val selectors1 = typedSelectors(exp.selectors)
     assignType(cpy.Export(exp)(expr1, selectors1))
-
-  // TODO{mk} containing a Splice should be validated earlier
-  def typedExportMacro(exp: untpd.ExportMacro)(using Context): ExportMacro =
-    val call1 = exp.call match {
-      case tree: untpd.Splice =>
-        typedSplice(tree, AnySelectionProto, true)
-    }
-    assignType(cpy.ExportMacro(exp)(call1))
 
   def typedPackageDef(tree: untpd.PackageDef)(using Context): Tree =
     val pid1 = withMode(Mode.InPackageClauseName)(typedExpr(tree.pid, AnySelectionProto))
@@ -2831,7 +2828,6 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
           case tree: untpd.Closure => typedClosure(tree, pt)
           case tree: untpd.Import => typedImport(tree, retrieveSym(tree))
           case tree: untpd.Export => typedExport(tree)
-          case tree: untpd.ExportMacro => typedExportMacro(tree)
           case tree: untpd.Match => typedMatch(tree, pt)
           case tree: untpd.Return => typedReturn(tree)
           case tree: untpd.WhileDo => typedWhileDo(tree)
@@ -2993,7 +2989,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
       case (stat: untpd.Export) :: rest =>
         buf +=  typed(stat)
         buf ++= stat.attachmentOrElse(ExportForwarders, Nil)
-          // no attachment can happen in case of cyclic references
+        // no attachment can happen in case of cyclic references
         traverse(rest)
       case (stat: untpd.ExtMethods) :: rest =>
         val xtree = stat.removeAttachment(ExpandedTree).get

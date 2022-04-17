@@ -496,13 +496,7 @@ object Contexts {
       fresh.setImportInfo(ImportInfo(sym, imp.selectors, imp.expr))
 
     /** A new context that summarizes an export macro statement */
-//    def importMacroContext(em: ImportMacro[?], sym: Symbol): FreshContext = {
-//      println("importMacroContext called")
-//      fresh.setImportMacroInfo(ImportMacroInfo(sym, em.call))
-//    }
-
-    /** A new context that summarizes an export macro statement */
-    def exportMacroContext(em: ExportMacro[?], sym: Symbol): FreshContext = {
+    def exportMacroContext(em: Export[?], sym: Symbol): FreshContext = {
       println("exportMacroContext called")
       fresh.setExportMacroInfo(ExportMacroInfo(sym, em.call))
     }
