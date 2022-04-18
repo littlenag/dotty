@@ -7,7 +7,6 @@ import Types._, Contexts._, Flags._, Symbols._, Trees._
 import Decorators._
 import Variances._
 import NameKinds._
-import util.Spans._
 import util.SrcPos
 import config.Printers.variances
 import config.Feature.migrateTo3
@@ -172,7 +171,7 @@ class VarianceChecker(using Context) {
             val towner = tvar.owner
             if towner.isAllOf(EnumCase) && towner.isClass && tvar.is(Synthetic) then
               val example =
-                "See an example at http://dotty.epfl.ch/docs/reference/enums/adts.html#parameter-variance-of-enums"
+                "See an example at https://docs.scala-lang.org/scala3/reference/enums/adts.html#parameter-variance-of-enums"
               i"\n${hl("enum case")} ${towner.name} requires explicit declaration of $tvar to resolve this issue.\n$example"
             else
               ""

@@ -1,8 +1,10 @@
 package dotty.tools.dotc
 package sbt
 
+import scala.language.unsafeNulls
+
 import ExtractDependencies.internalError
-import ast.{Positioned, Trees, tpd, untpd}
+import ast.{Positioned, Trees, tpd}
 import core._
 import core.Decorators._
 import Annotations._
@@ -14,14 +16,12 @@ import Types._
 import Symbols._
 import Names._
 import NameOps._
-import NameKinds.DefaultGetterName
 import typer.Inliner
 import transform.ValueClasses
 import transform.SymUtils._
 import dotty.tools.io.File
 import java.io.PrintWriter
 
-import xsbti.api.DefinitionType
 
 import scala.collection.mutable
 import scala.util.hashing.MurmurHash3
@@ -776,7 +776,7 @@ private class ExtractAPICollector(using Context) extends ThunkHolder {
           case n: Name =>
             h = nameHash(n, h)
           case elem =>
-            cannotHash(what = i"`$elem` of unknown class ${elem.getClass}", elem, tree)
+            cannotHash(what = i"`${elem.tryToShow}` of unknown class ${elem.getClass}", elem, tree)
       h
     end iteratorHash
 

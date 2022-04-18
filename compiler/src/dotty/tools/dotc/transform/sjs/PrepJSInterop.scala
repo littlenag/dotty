@@ -4,9 +4,8 @@ package sjs
 
 import scala.collection.mutable
 
-import ast.{Trees, tpd, untpd}
+import ast.tpd
 import core._
-import reporting._
 import typer.Checking
 import util.SrcPos
 import Annotations._
@@ -15,23 +14,17 @@ import Contexts._
 import Decorators._
 import DenotTransformers._
 import Flags._
-import NameKinds.DefaultGetterName
+import NameKinds.{DefaultGetterName, ModuleClassName}
 import NameOps._
-import Names._
-import Phases._
-import Scopes._
 import StdNames._
 import Symbols._
-import SymDenotations._
 import SymUtils._
-import Trees._
 import Types._
 
 import JSSymUtils._
 
-import org.scalajs.ir.Trees.{JSGlobalRef, JSNativeLoadSpec}
+import org.scalajs.ir.Trees.JSGlobalRef
 
-import dotty.tools.dotc.config.SJSPlatform.sjsPlatform
 import dotty.tools.backend.sjs.JSDefinitions.jsdefn
 
 /** A macro transform that runs after typer and before pickler to perform
@@ -508,7 +501,6 @@ class PrepJSInterop extends MacroTransform with IdentityDenotTransformer { thisP
     }
 
     private def checkJSNativeLoadSpecOf(pos: SrcPos, sym: Symbol)(using Context): Unit = {
-      import JSNativeLoadSpec._
 
       def checkGlobalRefName(globalRef: String): Unit = {
         if (!JSGlobalRef.isValidJSGlobalRefName(globalRef))
@@ -553,7 +545,7 @@ class PrepJSInterop extends MacroTransform with IdentityDenotTransformer { thisP
           val dotIndex = pathName.indexOf('.')
           val globalRef =
             if (dotIndex < 0) pathName
-            else pathName.substring(0, dotIndex)
+            else pathName.substring(0, dotIndex).nn
           checkGlobalRefName(globalRef)
         }
 
@@ -568,9 +560,14 @@ class PrepJSInterop extends MacroTransform with IdentityDenotTransformer { thisP
           case Some(annot) if annot.symbol == jsdefn.JSGlobalAnnot =>
             checkJSGlobalLiteral(annot)
             val pathName = annot.argumentConstantString(0).getOrElse {
-              if ((enclosingOwner is OwnerKind.ScalaMod) && !sym.owner.isPackageObject) {
+              val symTermName = sym.name.exclude(NameKinds.ModuleClassName).toTermName
+              if (symTermName == nme.apply) {
                 report.error(
-                    "Native JS members inside non-native objects must have an explicit name in @JSGlobal",
+                    "Native JS definitions named 'apply' must have an explicit name in @JSGlobal",
+                    annot.tree)
+              } else if (symTermName.isSetterName) {
+                report.error(
+                    "Native JS definitions with a name ending in '_=' must have an explicit name in @JSGlobal",
                     annot.tree)
               }
               sym.defaultJSName
@@ -579,6 +576,18 @@ class PrepJSInterop extends MacroTransform with IdentityDenotTransformer { thisP
 
           case Some(annot) if annot.symbol == jsdefn.JSImportAnnot =>
             checkJSImportLiteral(annot)
+            if (annot.arguments.sizeIs < 2) {
+              val symTermName = sym.name.exclude(NameKinds.ModuleClassName).toTermName
+              if (symTermName == nme.apply) {
+                report.error(
+                    "Native JS definitions named 'apply' must have an explicit name in @JSImport",
+                    annot.tree)
+              } else if (symTermName.isSetterName) {
+                report.error(
+                    "Native JS definitions with a name ending in '_=' must have an explicit name in @JSImport",
+                    annot.tree)
+              }
+            }
             annot.argumentConstantString(2).foreach { globalPathName =>
               checkGlobalRefPath(globalPathName)
             }
@@ -998,7 +1007,6 @@ object PrepJSInterop {
   val description: String = "additional checks and transformations for Scala.js"
 
   private final class OwnerKind private (private val baseKinds: Int) extends AnyVal {
-    import OwnerKind._
 
     inline def isBaseKind: Boolean =
       Integer.lowestOneBit(baseKinds) == baseKinds && baseKinds != 0 // exactly 1 bit on
@@ -1117,18 +1125,19 @@ object PrepJSInterop {
    */
   private def checkJSImportLiteral(annot: Annotation)(using Context): Unit = {
     val args = annot.arguments
-    assert(args.size == 2 || args.size == 3,
-        i"@JSImport annotation $annot does not have exactly 2 or 3 arguments")
+    val argCount = args.size
+    assert(argCount >= 1 && argCount <= 3,
+        i"@JSImport annotation $annot does not have between 1 and 3 arguments")
 
     val firstArgIsValid = annot.argumentConstantString(0).isDefined
     if (!firstArgIsValid)
       report.error("The first argument to @JSImport must be a literal string.", args.head)
 
-    val secondArgIsValid = annot.argumentConstantString(1).isDefined || args(1).symbol == jsdefn.JSImportNamespaceModule
+    val secondArgIsValid = argCount < 2 || annot.argumentConstantString(1).isDefined || args(1).symbol == jsdefn.JSImportNamespaceModule
     if (!secondArgIsValid)
       report.error("The second argument to @JSImport must be literal string or the JSImport.Namespace object.", args(1))
 
-    val thirdArgIsValid = args.size < 3 || annot.argumentConstantString(2).isDefined
+    val thirdArgIsValid = argCount < 3 || annot.argumentConstantString(2).isDefined
     if (!thirdArgIsValid)
       report.error("The third argument to @JSImport, when present, must be a literal string.", args(2))
   }

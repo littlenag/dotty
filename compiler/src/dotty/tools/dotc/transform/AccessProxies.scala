@@ -11,8 +11,6 @@ import NameOps._
 import Decorators._
 import TypeUtils._
 import Types._
-import NameKinds.ClassifiedNameKind
-import ast.Trees._
 import util.Spans.Span
 import config.Printers.transforms
 
@@ -60,7 +58,7 @@ abstract class AccessProxies {
 
   /** Add all needed accessors to the `body` of class `cls` */
   def addAccessorDefs(cls: Symbol, body: List[Tree])(using Context): List[Tree] = {
-    val accDefs = accessorDefs(cls)
+    val accDefs = accessorDefs(cls).toList
     transforms.println(i"add accessors for $cls: $accDefs%, %")
     if (accDefs.isEmpty) body else body ++ accDefs
   }

@@ -5,7 +5,6 @@ import core._
 import MegaPhase.MiniPhase
 import dotty.tools.dotc.core.Contexts._
 import ast._
-import Trees._
 import Flags._
 import Symbols._
 import Contexts._
@@ -14,7 +13,6 @@ import DenotTransformers._
 import ExplicitOuter.isOuterParamAccessor
 import CountOuterAccesses.mightBeDropped
 import collection.mutable
-import annotation.threadUnsafe
 
 object DropOuterAccessors:
   val name: String = "dropOuterAccessors"
@@ -82,7 +80,7 @@ class DropOuterAccessors extends MiniPhase with IdentityDenotTransformer:
             cpy.Block(rhs)(inits.filterNot(dropOuterInit), expr)
         })
     assert(droppedParamAccessors.isEmpty,
-      i"""Failed to eliminate: $droppedParamAccessors
+      i"""Failed to eliminate: ${droppedParamAccessors.toList}
           when dropping outer accessors for ${ctx.owner} with
           $impl""")
     cpy.Template(impl)(constr = constr1, body = body1)

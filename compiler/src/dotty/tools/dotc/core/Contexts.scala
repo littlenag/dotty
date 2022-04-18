@@ -49,10 +49,10 @@ object Contexts {
   private val (printerFnLoc,        store3) = store2.newLocation[Context => Printer](new RefinedPrinter(_))
   private val (settingsStateLoc,    store4) = store3.newLocation[SettingsState]()
   private val (compilationUnitLoc,  store5) = store4.newLocation[CompilationUnit]()
-  private val (runLoc,              store6) = store5.newLocation[Run]()
+  private val (runLoc,              store6) = store5.newLocation[Run | Null]()
   private val (profilerLoc,         store7) = store6.newLocation[Profiler]()
   private val (notNullInfosLoc,     store8) = store7.newLocation[List[NotNullInfo]]()
-  private val (importInfoLoc,       store9) = store8.newLocation[ImportInfo]()
+  private val (importInfoLoc,       store9) = store8.newLocation[ImportInfo | Null]()
   private val (typeAssignerLoc,    store10) = store9.newLocation[TypeAssigner](TypeAssigner)
   private val (exportMacroInfoLoc, store11) = store10.newLocation[ExportMacroInfo]()
 
@@ -179,7 +179,7 @@ object Contexts {
     final def gadt: GadtConstraint = _gadt
 
     /** The history of implicit searches that are currently active */
-    private var _searchHistory: SearchHistory = null
+    private var _searchHistory: SearchHistory = _
     protected def searchHistory_= (searchHistory: SearchHistory): Unit = _searchHistory = searchHistory
     final def searchHistory: SearchHistory = _searchHistory
 
@@ -228,16 +228,16 @@ object Contexts {
     def compilationUnit: CompilationUnit = store(compilationUnitLoc)
 
     /** The current compiler-run */
-    def run: Run = store(runLoc)
+    def run: Run | Null = store(runLoc)
 
     /**  The current compiler-run profiler */
     def profiler: Profiler = store(profilerLoc)
 
     /** The paths currently known to be not null */
-    def notNullInfos = store(notNullInfosLoc)
+    def notNullInfos: List[NotNullInfo] = store(notNullInfosLoc)
 
     /** The currently active import info */
-    def importInfo = store(importInfoLoc)
+    def importInfo: ImportInfo | Null = store(importInfoLoc)
 
     /** The currently active export macro info */
     def exportMacroInfo = store(exportMacroInfoLoc)
@@ -246,7 +246,7 @@ object Contexts {
     def typeAssigner: TypeAssigner = store(typeAssignerLoc)
 
     /** The new implicit references that are introduced by this scope */
-    protected var implicitsCache: ContextualImplicits = null
+    protected var implicitsCache: ContextualImplicits | Null = null
     def implicits: ContextualImplicits = {
       if (implicitsCache == null)
         implicitsCache = {
@@ -256,30 +256,29 @@ object Contexts {
               catch {
                 case ex: CyclicReference => Nil
               }
-            else if (isImportContext) importInfo.importedImplicits
+            else if (isImportContext) importInfo.nn.importedImplicits
             else if (isNonEmptyScopeContext) scope.implicitDecls
             else Nil
           val outerImplicits =
-            if (isImportContext && importInfo.unimported.exists)
-              outer.implicits exclude importInfo.unimported
+            if (isImportContext && importInfo.nn.unimported.exists)
+              outer.implicits exclude importInfo.nn.unimported
             else
               outer.implicits
           if (implicitRefs.isEmpty) outerImplicits
           else new ContextualImplicits(implicitRefs, outerImplicits, isImportContext)(this)
         }
-      implicitsCache
+      implicitsCache.nn
     }
 
     /** Either the current scope, or, if the current context owner is a class,
      *  the declarations of the current class.
      */
     def effectiveScope(using Context): Scope =
-      if owner != null && owner.isClass then owner.asClass.unforcedDecls
+      val myOwner: Symbol | Null = owner
+      if myOwner != null && myOwner.isClass then myOwner.asClass.unforcedDecls
       else scope
 
-    def nestingLevel: Int =
-      val sc = effectiveScope
-      if sc != null then sc.nestingLevel else 0
+    def nestingLevel: Int = effectiveScope.nestingLevel
 
     /** Sourcefile corresponding to given abstract file, memoized */
     def getSource(file: AbstractFile, codec: => Codec = Codec(settings.encoding.value)) = {
@@ -313,15 +312,15 @@ object Contexts {
     def getFile(name: String): AbstractFile = getFile(name.toTermName)
 
 
-    private var related: SimpleIdentityMap[Phase | SourceFile, Context] = null
+    private var related: SimpleIdentityMap[Phase | SourceFile, Context] | Null = null
 
-    private def lookup(key: Phase | SourceFile): Context =
+    private def lookup(key: Phase | SourceFile): Context | Null =
       util.Stats.record("Context.related.lookup")
       if related == null then
         related = SimpleIdentityMap.empty
         null
       else
-        related(key)
+        related.nn(key)
 
     private def withPhase(phase: Phase, pid: PhaseId): Context =
       util.Stats.record("Context.withPhase")
@@ -333,7 +332,7 @@ object Contexts {
         if ctx1 == null then
           util.Stats.record("Context.withPhase.new")
           ctx1 = fresh.setPhase(pid)
-          related = related.updated(phase, ctx1)
+          related = related.nn.updated(phase, ctx1)
         ctx1
 
     final def withPhase(phase: Phase): Context = withPhase(phase, phase.id)
@@ -348,13 +347,13 @@ object Contexts {
         if ctx1 == null then
           util.Stats.record("Context.withSource.new")
           val ctx2 = fresh.setSource(source)
-          if ctx2.compilationUnit == null then
+          if ctx2.compilationUnit eq NoCompilationUnit then
             // `source` might correspond to a file not necessarily
             // in the current project (e.g. when inlining library code),
             // so set `mustExist` to false.
             ctx2.setCompilationUnit(CompilationUnit(source, mustExist = false))
           ctx1 = ctx2
-          related = related.updated(source, ctx2)
+          related = related.nn.updated(source, ctx2)
         ctx1
 
     // `creationTrace`-related code. To enable, uncomment the code below and the
@@ -392,11 +391,7 @@ object Contexts {
     final def erasedTypes = phase.erasedTypes
 
     /** Are we in a Java compilation unit? */
-    final def isJava: Boolean =
-      // FIXME: It would be much nicer if compilationUnit was non-nullable,
-      // perhaps we need to introduce a `NoCompilationUnit` compilation unit
-      // to be used as a default value.
-      compilationUnit != null && compilationUnit.isJava
+    final def isJava: Boolean = compilationUnit.isJava
 
     /** Is current phase after TyperPhase? */
     final def isAfterTyper = base.isAfterTyper(phase)
@@ -410,7 +405,7 @@ object Contexts {
     def isImportContext: Boolean =
       (this ne NoContext)
       && (outer ne NoContext)
-      && (this.importInfo ne outer.importInfo)
+      && (this.importInfo nen outer.importInfo)
 
     /** Is this a context that introduces an export macro clause? */
     def isExportMacroContext: Boolean =
@@ -502,7 +497,7 @@ object Contexts {
     }
 
     def scalaRelease: ScalaRelease =
-      val releaseName = base.settings.YscalaRelease.value
+      val releaseName = base.settings.scalaOutputVersion.value
       if releaseName.nonEmpty then ScalaRelease.parse(releaseName).get else ScalaRelease.latest
 
     def tastyVersion: TastyVersion =
@@ -510,7 +505,7 @@ object Contexts {
       val latestRelease = ScalaRelease.latest
       val specifiedRelease = scalaRelease
       if specifiedRelease < latestRelease then
-        // This is needed to make -Yscala-release a no-op when set to the latest release for unstable versions of the compiler
+        // This is needed to make -scala-output-version a no-op when set to the latest release for unstable versions of the compiler
         // (which might have the tasty format version numbers set to higher values before they're decreased during a release)
         TastyVersion.fromStableScalaRelease(specifiedRelease.majorVersion, specifiedRelease.minorVersion)
       else
@@ -584,7 +579,8 @@ object Contexts {
 
     override def toString: String =
       def iinfo(using Context) =
-        if (ctx.importInfo == null) "" else i"${ctx.importInfo.selectors}%, %"
+        val info = ctx.importInfo
+        if (info == null) "" else i"${info.selectors}%, %"
       def cinfo(using Context) =
         val core = s"  owner = ${ctx.owner}, scope = ${ctx.scope}, import = $iinfo"
         if (ctx ne NoContext) && (ctx.implicits ne ctx.outer.implicits) then
@@ -675,7 +671,7 @@ object Contexts {
     def setSbtCallback(callback: AnalysisCallback): this.type = updateStore(sbtCallbackLoc, callback)
     def setPrinterFn(printer: Context => Printer): this.type = updateStore(printerFnLoc, printer)
     def setSettings(settingsState: SettingsState): this.type = updateStore(settingsStateLoc, settingsState)
-    def setRun(run: Run): this.type = updateStore(runLoc, run)
+    def setRun(run: Run | Null): this.type = updateStore(runLoc, run)
     def setProfiler(profiler: Profiler): this.type = updateStore(profilerLoc, profiler)
     def setNotNullInfos(notNullInfos: List[NotNullInfo]): this.type = updateStore(notNullInfosLoc, notNullInfos)
     def setImportInfo(importInfo: ImportInfo): this.type =
@@ -846,15 +842,17 @@ object Contexts {
     owner = NoSymbol
     tree = untpd.EmptyTree
     moreProperties = Map(MessageLimiter -> DefaultMessageLimiter())
+    scope = EmptyScope
     source = NoSource
     store = initialStore
       .updated(settingsStateLoc, settingsGroup.defaultState)
       .updated(notNullInfosLoc, Nil)
+      .updated(compilationUnitLoc, NoCompilationUnit)
     searchHistory = new SearchRoot
     gadt = EmptyGadtConstraint
   }
 
-  @sharable object NoContext extends Context(null) {
+  @sharable object NoContext extends Context((null: ContextBase | Null).uncheckedNN) {
     source = NoSource
     override val implicits: ContextualImplicits = new ContextualImplicits(Nil, null, false)(this)
   }
@@ -873,14 +871,15 @@ object Contexts {
     val initialCtx: Context = new InitialContext(this, settings)
 
     /** The platform, initialized by `initPlatform()`. */
-    private var _platform: Platform = _
+    private var _platform: Platform | Null = _
 
     /** The platform */
     def platform: Platform = {
-      if (_platform == null)
+      val p = _platform
+      if p == null then
         throw new IllegalStateException(
             "initialize() must be called before accessing platform")
-      _platform
+      p
     }
 
     protected def newPlatform(using Context): Platform =
@@ -890,11 +889,11 @@ object Contexts {
     /** The loader that loads the members of _root_ */
     def rootLoader(root: TermSymbol)(using Context): SymbolLoader = platform.rootLoader(root)
 
-    // Set up some phases to get started */
-    usePhases(List(SomePhase))
-
     /** The standard definitions */
     val definitions: Definitions = new Definitions
+
+    // Set up some phases to get started */
+    usePhases(List(SomePhase))
 
     /** Initializes the `ContextBase` with a starting context.
      *  This initializes the `platform` and the `definitions`.
@@ -930,8 +929,8 @@ object Contexts {
     /** A table for hash consing unique named types */
     private[core] val uniqueNamedTypes: NamedTypeUniques = NamedTypeUniques()
 
-    var emptyTypeBounds: TypeBounds = null
-    var emptyWildcardBounds: WildcardType = null
+    var emptyTypeBounds: TypeBounds | Null = null
+    var emptyWildcardBounds: WildcardType | Null = null
 
     /** Number of findMember calls on stack */
     private[core] var findMemberCount: Int = 0
@@ -1025,7 +1024,7 @@ object Contexts {
     // Test that access is single threaded
 
     /** The thread on which `checkSingleThreaded was invoked last */
-    @sharable private var thread: Thread = null
+    @sharable private var thread: Thread | Null = null
 
     /** Check that we are on the same thread as before */
     def checkSingleThreaded(): Unit =
