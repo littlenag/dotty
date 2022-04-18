@@ -923,6 +923,14 @@ object Trees {
   case class Export[-T >: Untyped] private[ast] (expr: Tree[T], selectors: List[untpd.ImportSelector])(implicit @constructorOnly src: SourceFile)
     extends ImportOrExport[T] {
       type ThisTree[-T >: Untyped] = Export[T]
+
+      // After typing we have a tpd.Inline
+      def isSplice = expr match {
+        case untpd.Splice(_) => true
+        case _ => false
+      }
+
+      def isStandard = !isSplice
   }
 
   /** package pid { stats } */

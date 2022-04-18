@@ -199,7 +199,7 @@ trait QuotesAndSplices {
     pat.select(tpnme.Underlying)
 
   private def checkSpliceOutsideQuote(tree: untpd.Tree, inImportExportMacro: Boolean = false)(using Context): Unit =
-    report.echo(s"checkSpliceOutsideQuote ${inImportExportMacro} show: ${tree.show} ${ctx.owner}\n")
+    report.echo(s"checkSpliceOutsideQuote inMacro=$inImportExportMacro show: ${tree.show} ${ctx.owner}\n")
     if (level == 0 && !(ctx.owner.ownersIterator.exists(_.is(Inline)) || inImportExportMacro))
       report.error("Splice ${...} outside quotes '{...} or inline method", tree.srcPos)
     else if (level < 0)

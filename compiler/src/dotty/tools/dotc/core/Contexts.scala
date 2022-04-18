@@ -498,7 +498,7 @@ object Contexts {
     /** A new context that summarizes an export macro statement */
     def exportMacroContext(em: Export[?], sym: Symbol): FreshContext = {
       println("exportMacroContext called")
-      fresh.setExportMacroInfo(ExportMacroInfo(sym, em.call))
+      fresh.setExportMacroInfo(ExportMacroInfo(sym, em.expr))
     }
 
     def scalaRelease: ScalaRelease =

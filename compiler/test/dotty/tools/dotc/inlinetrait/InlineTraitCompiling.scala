@@ -66,36 +66,36 @@ class InlineTraitCompiling extends DottyTest {
     }
   }
 
-  //@Test
+  @Test
   def exportMacroSimple: Unit = {
     val sources = List(
-      s"""
-          | import scala.quoted._
-          |
-          | object TestMacro {
-          |   def dothis(b: Boolean)(using Quotes): Expr[Any] = {
-          |     if (b)
-          |       '{
-          |         object fizzle {
-          |           def withFizzle = 12
-          |         }
-          |       }
-          |     else
-          |       '{
-          |         object swizzle {
-          |           def withSwizzle = "swizzle"
-          |         }
-          |       }
-          |   }
-          |
-          | }
-        """,
+      """
+        | import scala.quoted._
+        |
+        | object TestMacro {
+        |   def dothis(b: Boolean)(using Quotes): Expr[Any] = {
+        |     if (b)
+        |       '{
+        |         object fizzle {
+        |           def withFizzle = 12
+        |         }
+        |       }
+        |     else
+        |       '{
+        |         object swizzle {
+        |           def withSwizzle = "swizzle"
+        |         }
+        |       }
+        |   }
+        |
+        | }
+      """.stripMargin,
 
-      s"""
-          | class Foo {
-          |  export $${TestMacro.dothis(true)}
-          | }
-        """.stripMargin
+      """
+        | class Foo {
+        |  export ${TestMacro.dothis(true)}._
+        | }
+      """.stripMargin
     )
 
     println("Export Macro Test")

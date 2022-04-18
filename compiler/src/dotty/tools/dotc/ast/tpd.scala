@@ -1173,7 +1173,7 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
               case stat: Import =>
                 println("Triggered import context addition")
                 ctx.importContext(stat, stat.symbol)
-              case stat @ Export(Splice(_), _) =>
+              case stat: Export if stat.isSplice =>
                 println("Triggered export macro context addition")
                 ctx.exportMacroContext(stat, stat.symbol)
               case _ => ctx

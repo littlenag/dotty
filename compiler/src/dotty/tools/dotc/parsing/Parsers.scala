@@ -5,32 +5,33 @@ package parsing
 import scala.annotation.internal.sharable
 import scala.collection.mutable.ListBuffer
 import scala.collection.immutable.BitSet
-import util.{ SourceFile, SourcePosition, NoSourcePosition }
-import Tokens._
-import Scanners._
+import util.{NoSourcePosition, SourceFile, SourcePosition}
+import Tokens.*
+import Scanners.*
 import xml.MarkupParsers.MarkupParser
-import core._
-import Flags._
-import Contexts._
-import Names._
+import core.*
+import Flags.*
+import Contexts.*
+import Names.*
 import NameKinds.WildcardParamName
-import NameOps._
-import ast.{Positioned, Trees}
-import ast.Trees._
+import NameOps.*
+import ast.{Positioned, Trees, untpd}
+import ast.Trees.*
 import typer.ImportInfo
-import StdNames._
-import util.Spans._
-import Constants._
-import Symbols.{defn, NoSymbol}
-import ScriptParsers._
-import Decorators._
+import StdNames.*
+import util.Spans.*
+import Constants.*
+import Symbols.{NoSymbol, defn}
+import ScriptParsers.*
+import Decorators.*
 import util.Chars
-import scala.annotation.{tailrec, switch}
-import rewrites.Rewrites.{patch, overlapsPatch}
-import reporting._
+
+import scala.annotation.{switch, tailrec}
+import rewrites.Rewrites.{overlapsPatch, patch}
+import reporting.*
 import config.Feature
-import config.Feature.{sourceVersion, migrateTo3}
-import config.SourceVersion._
+import config.Feature.{migrateTo3, sourceVersion}
+import config.SourceVersion.*
 import config.SourceVersion
 
 object Parsers {
@@ -3168,7 +3169,7 @@ object Parsers {
           val firstPos =
             if (t.span.exists) t.span.withStart(offset)
             else Span(offset, in.lastOffset)
-            t.withSpan(firstPos) :: rest
+          t.withSpan(firstPos) :: rest
         case nil => nil
       }
     }

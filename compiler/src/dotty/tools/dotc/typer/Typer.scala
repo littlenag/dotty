@@ -2568,8 +2568,10 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
   def typedExport(exp: untpd.Export)(using Context): Export =
     val expr1 = exp.expr match {
       case tree: untpd.Splice =>
+        report.echo("typedExport splice")
         typedSplice(tree, AnySelectionProto, true)
       case other =>
+        report.echo("typedExport other")
         typedExpr(other, AnySelectionProto)
     }
     // already called `checkLegalExportPath` in Namer

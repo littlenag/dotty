@@ -1437,13 +1437,13 @@ class Namer { typer: Typer =>
     private def processExports(using Context): Unit =
 
       def process(stats: List[Tree])(using Context): Unit = stats match
-        case (stat @ Export(Splice(_),_)) :: stats1 =>
-          for forwarder <- exportMacroForwarders(stat) do
-            forwarder.symbol.entered
-          process(stats1)
         case (stat: Export) :: stats1 =>
-          for forwarder <- exportForwarders(stat) do
-            forwarder.symbol.entered
+          if stat.isSplice then
+            for forwarder <- exportMacroForwarders(stat) do
+              forwarder.symbol.entered
+          else
+            for forwarder <- exportForwarders(stat) do
+              forwarder.symbol.entered
           process(stats1)
         case (stat: Import) :: stats1 =>
           process(stats1)(using ctx.importContext(stat, symbolOfTree(stat)))
