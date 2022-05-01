@@ -69,31 +69,34 @@ class InlineTraitCompiling extends DottyTest {
   @Test
   def exportMacroSimple: Unit = {
     val sources = List(
-      """
-        | import scala.quoted._
-        |
-        | object TestMacro {
-        |   def dothis(b: Boolean)(using Quotes): Expr[Any] = {
-        |     if (b)
-        |       '{
-        |         object fizzle {
-        |           def withFizzle = 12
-        |         }
-        |       }
-        |     else
-        |       '{
-        |         object swizzle {
-        |           def withSwizzle = "swizzle"
-        |         }
-        |       }
-        |   }
-        |
-        | }
-      """.stripMargin,
+//      """
+//        | import scala.quoted._
+//        |
+//        | object TestMacro {
+//        |   def dothis(b: Boolean)(using Quotes): Expr[Any] = {
+//        |     if (b)
+//        |       '{
+//        |         object fizzle {
+//        |           def withFizzle = 12
+//        |         }
+//        |       }
+//        |     else
+//        |       '{
+//        |         object swizzle {
+//        |           def withSwizzle = "swizzle"
+//        |         }
+//        |       }
+//        |   }
+//        |
+//        | }
+//      """.stripMargin,
 
       """
         | class Foo {
-        |  export ${TestMacro.dothis(true)}._
+        |
+        |   inline object Foo = ${TestMacro.dothis(true)}
+        |
+        |   export ${TestMacro.dothis(true)}._
         | }
       """.stripMargin
     )
@@ -107,6 +110,7 @@ class InlineTraitCompiling extends DottyTest {
 
       val printer = new RefinedPrinter(context)
 
+      println("TREE:")
       println(tree.toText(printer).show)
       //val bar = tree.find(tree => tree.symbol.name == termName("bar")).get
       //assertEquals("trait Too", bar.symbol.owner.show)

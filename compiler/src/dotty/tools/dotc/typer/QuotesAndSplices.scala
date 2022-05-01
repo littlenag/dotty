@@ -1,24 +1,25 @@
 package dotty.tools.dotc
 package typer
 
-import dotty.tools.dotc.ast._
-import dotty.tools.dotc.config.Feature._
-import dotty.tools.dotc.config.SourceVersion._
-import dotty.tools.dotc.core._
-import dotty.tools.dotc.core.Annotations._
-import dotty.tools.dotc.core.Contexts._
-import dotty.tools.dotc.core.Decorators._
-import dotty.tools.dotc.core.Flags._
+import dotty.tools.dotc.ast.*
+import dotty.tools.dotc.config.Feature.*
+import dotty.tools.dotc.config.SourceVersion.*
+import dotty.tools.dotc.core.*
+import dotty.tools.dotc.core.Annotations.*
+import dotty.tools.dotc.core.Contexts.*
+import dotty.tools.dotc.core.Decorators.*
+import dotty.tools.dotc.core.Flags.*
 import dotty.tools.dotc.core.NameKinds.PatMatGivenVarName
-import dotty.tools.dotc.core.Names._
-import dotty.tools.dotc.core.StagingContext._
-import dotty.tools.dotc.core.StdNames._
-import dotty.tools.dotc.core.Symbols._
-import dotty.tools.dotc.core.Types._
-import dotty.tools.dotc.transform.SymUtils._
-import dotty.tools.dotc.typer.Implicits._
-import dotty.tools.dotc.typer.Inferencing._
-import dotty.tools.dotc.util.Spans._
+import dotty.tools.dotc.core.Names.*
+import dotty.tools.dotc.core.StagingContext.*
+import dotty.tools.dotc.core.StdNames.*
+import dotty.tools.dotc.core.Symbols.*
+import dotty.tools.dotc.core.Types.*
+import dotty.tools.dotc.parsing.Parsers.ImportExportInfo
+import dotty.tools.dotc.transform.SymUtils.*
+import dotty.tools.dotc.typer.Implicits.*
+import dotty.tools.dotc.typer.Inferencing.*
+import dotty.tools.dotc.util.Spans.*
 import dotty.tools.dotc.util.Stats.record
 
 import scala.collection.mutable
@@ -69,7 +70,8 @@ trait QuotesAndSplices {
 
   /** Translate `${ t: Expr[T] }` into expression `t.splice` while tracking the quotation level in the context */
   def typedSplice(tree: untpd.Splice, pt: Type, inImportExport: Boolean = false)(using Context): Tree = {
-    record("typedSplice")
+    record("typedSplice1")
+    report.echo("typedSplice2")
     checkSpliceOutsideQuote(tree, inImportExport)
     tree.expr match {
       case untpd.Quote(innerExpr) if innerExpr.isTerm =>
@@ -124,6 +126,7 @@ trait QuotesAndSplices {
    *  The prototype must be fully defined to be able to infer the type of `R`.
    */
   def typedAppliedSplice(tree: untpd.Apply, pt: Type)(using Context): Tree = {
+    report.echo("typedAppliedSplice")
     assert(ctx.mode.is(Mode.QuotedPattern))
     val untpd.Apply(splice: untpd.Splice, args) = tree
     if !isFullyDefined(pt, ForceDegree.flipBottom) then
@@ -193,7 +196,7 @@ trait QuotesAndSplices {
 
   private def checkSpliceOutsideQuote(tree: untpd.Tree, inImportExportMacro: Boolean = false)(using Context): Unit =
     report.echo(s"checkSpliceOutsideQuote inMacro=$inImportExportMacro show: ${tree.show} ${ctx.owner}\n")
-    if (level == 0 && !(ctx.owner.ownersIterator.exists(_.is(Inline)) || inImportExportMacro))
+    if (level == 0 && !(ctx.owner.ownersIterator.exists(_.is(Inline)) || inImportExportMacro || tree.hasAttachment(ImportExportInfo)))
       report.error("Splice ${...} outside quotes '{...} or inline method", tree.srcPos)
     else if (level < 0)
       report.error(

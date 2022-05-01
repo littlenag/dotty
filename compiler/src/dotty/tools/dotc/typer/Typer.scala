@@ -2796,6 +2796,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
    */
   def typedUnadapted(initTree: untpd.Tree, pt: Type, locked: TypeVars)(using Context): Tree = {
     record("typedUnadapted")
+    //report.echo("typedUnadapted")
     val xtree = expanded(initTree)
     xtree.removeAttachment(TypedAhead) match {
       case Some(ttree) => ttree
@@ -2803,6 +2804,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
 
         def typedNamed(tree: untpd.NameTree, pt: Type)(using Context): Tree = {
           val sym = retrieveSym(xtree)
+          //report.echo("typedNamed")
           tree match {
             case tree: untpd.Ident => typedIdent(tree, pt)
             case tree: untpd.Select => typedSelect(tree, pt)
@@ -2849,7 +2851,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
           case tree: untpd.Function => typedFunction(tree, pt)
           case tree: untpd.Closure => typedClosure(tree, pt)
           case tree: untpd.Import => typedImport(tree, retrieveSym(tree))
-          case tree: untpd.Export => typedExport(tree)
+          case tree: untpd.Export => report.echo("typedUnnamed Export"); typedExport(tree)
           case tree: untpd.Match => typedMatch(tree, pt)
           case tree: untpd.Return => typedReturn(tree)
           case tree: untpd.WhileDo => typedWhileDo(tree)
@@ -2880,7 +2882,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
           case tree @ untpd.PostfixOp(qual, Ident(nme.WILDCARD)) => typedAsFunction(tree, pt)
           case untpd.EmptyTree => tpd.EmptyTree
           case tree: untpd.Quote => typedQuote(tree, pt)
-          case tree: untpd.Splice => typedSplice(tree, pt)
+          case tree: untpd.Splice => report.echo(s"typedUnnamed Splice ${tree}"); typedSplice(tree, pt)
           case tree: untpd.TypSplice => typedTypSplice(tree, pt)
           case tree: untpd.MacroTree => report.error("Unexpected macro", tree.srcPos); tpd.nullLiteral  // ill-formed code may reach here
           case _ => typedUnadapted(desugar(tree), pt, locked)

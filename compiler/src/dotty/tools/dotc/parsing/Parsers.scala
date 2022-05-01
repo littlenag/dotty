@@ -3,7 +3,6 @@ package dotc
 package parsing
 
 import scala.language.unsafeNulls
-
 import scala.annotation.internal.sharable
 import scala.collection.mutable.ListBuffer
 import scala.collection.immutable.BitSet
@@ -16,23 +15,25 @@ import Flags.*
 import Contexts.*
 import Names.*
 import NameKinds.WildcardParamName
-import NameOps._
+import NameOps.*
 import ast.{Positioned, Trees}
-import ast.Trees._
-import StdNames._
-import util.Spans._
-import Constants._
+import ast.Trees.*
+import StdNames.*
+import util.Spans.*
+import Constants.*
 import Symbols.NoSymbol
-import ScriptParsers._
-import Decorators._
+import ScriptParsers.*
+import Decorators.*
 import util.Chars
+
 import scala.annotation.tailrec
-import rewrites.Rewrites.{patch, overlapsPatch}
-import reporting._
+import rewrites.Rewrites.{overlapsPatch, patch}
+import reporting.*
 import config.Feature
 import config.Feature.{migrateTo3, sourceVersion}
 import config.SourceVersion.*
 import config.SourceVersion
+import dotty.tools.dotc.ast.untpd.Tree
 
 object Parsers {
 
@@ -168,6 +169,10 @@ object Parsers {
         }
     }
   }
+
+  case class OwningImportExport(owner: Tree)
+
+  val ImportExportInfo = dotty.tools.dotc.util.Property.StickyKey[OwningImportExport]
 
   class Parser(source: SourceFile)(using Context) extends ParserCommon(source) {
 
@@ -3145,7 +3150,10 @@ object Parsers {
     def finalizeDef(md: MemberDef, mods: Modifiers, start: Int): md.ThisTree[Untyped] =
       md.withMods(mods).setComment(in.getDocComment(start))
 
-    type ImportConstr = (Tree, List[ImportSelector]) => Tree
+    enum SelectedTarget:
+      case NormalTarget, MacroTarget
+
+    type ImportConstr = (Tree, List[ImportSelector], SelectedTarget) => Tree
 
     /** Import ::= `import' ImportExpr {‘,’ ImportExpr}
      */
@@ -3167,7 +3175,19 @@ object Parsers {
     def exportClause(): List[Tree] = {
       val offset = accept(EXPORT)
 
-      commaSeparated(importExpr(Export(_,_))) match {
+      def mk(tree: Tree, selectors: List[ImportSelector], target: SelectedTarget): Tree = {
+        val owner = Export(tree,selectors)
+
+        target match {
+          case SelectedTarget.MacroTarget =>
+            tree.putAttachment(ImportExportInfo, OwningImportExport(owner))
+          case _ =>
+        }
+
+        owner
+      }
+
+      commaSeparated(importExpr(mk)) match {
         case t :: rest =>
           // The first import should start at the start offset of the keyword.
           val firstPos =
@@ -3179,7 +3199,7 @@ object Parsers {
     }
 
     /** Create an import node and handle source version imports */
-    def mkImport(outermost: Boolean = false): ImportConstr = (tree, selectors) =>
+    def mkImport(outermost: Boolean = false): ImportConstr = (tree, selectors, target) =>
       val imp = Import(tree, selectors)
       languageImport(tree) match
         case Some(prefix) =>
@@ -3265,42 +3285,42 @@ object Parsers {
           finally idOK &= !isWildcard
         }
 
-      def importSelection(qual: Tree): Tree =
+      def importSelection(qual: Tree, target: SelectedTarget): Tree =
         if in.isIdent(nme.as) && qual.isInstanceOf[RefTree] then
           qual match
             case Select(qual1, name) =>
               val from = Ident(name).withSpan(Span(qual.span.point, qual.span.end, 0))
-              mkTree(qual1, namedSelector(from) :: Nil)
+              mkTree(qual1, namedSelector(from) :: Nil, target)
             case qual: Ident =>
-              mkTree(EmptyTree, namedSelector(qual) :: Nil)
+              mkTree(EmptyTree, namedSelector(qual) :: Nil, target)
         else
           accept(DOT)
           in.token match
             case USCORE =>
-              mkTree(qual, wildcardSelector() :: Nil)
+              mkTree(qual, wildcardSelector() :: Nil, target)
             case GIVEN =>
-              mkTree(qual, givenSelector() :: Nil)
+              mkTree(qual, givenSelector() :: Nil, target)
             case LBRACE =>
-              mkTree(qual, inBraces(importSelectors()))
+              mkTree(qual, inBraces(importSelectors()), target)
             case _ =>
               if isIdent(nme.raw.STAR) then
-                mkTree(qual, wildcardSelector() :: Nil)
+                mkTree(qual, wildcardSelector() :: Nil, target)
               else
                 val start = in.offset
                 val name = ident()
                 if in.token == DOT then
-                  importSelection(atSpan(startOffset(qual), start) { Select(qual, name) })
+                  importSelection(atSpan(startOffset(qual), start) { Select(qual, name) }, target)
                 else
-                  mkTree(qual, namedSelector(atSpan(start) { Ident(name) }) :: Nil)
+                  mkTree(qual, namedSelector(atSpan(start) { Ident(name) }) :: Nil, target)
       end importSelection
 
       () => atSpan(in.offset) {
-        importSelection(
-          if isImportExportSplice then
-            importExportSplice
-          else
-            simpleRef()
-        )
+        val (tree, target) = if isImportExportSplice then
+          (importExportSplice, SelectedTarget.MacroTarget)
+        else
+          (simpleRef(), SelectedTarget.NormalTarget)
+
+        importSelection(tree,target)
       }
     end importExpr
 

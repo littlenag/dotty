@@ -1,5 +1,5 @@
-package dotty.tools.dotc.inlinetrait
+package dotty.tools.dotc.t
 
-class InlineTraitParsing {
+class tParsing {
 
 }

@@ -2,16 +2,30 @@ package dotty.tools
 package dotc
 package typer
 
-import core._
-import ast._
-import Trees._, StdNames._, Scopes._, Denotations._, NamerOps._, ContextOps._
-import Contexts._, Symbols._, Types._, SymDenotations._, Names._, NameOps._, Flags._
-import Decorators._, Comments.{_, given}
+import core.*
+import ast.*
+import Trees.*
+import StdNames.*
+import Scopes.*
+import Denotations.*
+import NamerOps.*
+import ContextOps.*
+import Contexts.*
+import Symbols.*
+import Types.*
+import SymDenotations.*
+import Names.*
+import NameOps.*
+import Flags.*
+import Decorators.*
+import Comments.{*, given}
 import NameKinds.DefaultGetterName
-import ast.desugar, ast.desugar._
-import ProtoTypes._
-import util.Spans._
+import ast.desugar
+import ast.desugar.*
+import ProtoTypes.*
+import util.Spans.*
 import util.Property
+
 import collection.mutable
 import tpd.tpes
 import Variances.alwaysInvariant
@@ -19,14 +33,15 @@ import config.{Config, Feature}
 import config.Printers.typr
 import parsing.JavaParsers.JavaParser
 import parsing.Parsers.Parser
-import Annotations._
-import Inferencing._
-import transform.ValueClasses._
-import transform.TypeUtils._
-import transform.SymUtils._
-import reporting._
+import Annotations.*
+import Inferencing.*
+import transform.ValueClasses.*
+import transform.TypeUtils.*
+import transform.SymUtils.*
+import reporting.*
 import config.Feature.sourceVersion
-import config.SourceVersion._
+import config.SourceVersion.*
+import dotty.tools.dotc.printing.RefinedPrinter
 
 
 /** This class creates symbols from definitions and imports and gives them
@@ -1086,7 +1101,12 @@ class Namer { typer: Typer =>
       // TODO{mk} symbolOfTree in checkSplice
       // here is where we evaluate our macro call
 
-      val i = Inliner.inlineCall(path)
+      val printer = new RefinedPrinter(ctx)
+
+      // Returns an Inlined
+      val inlined = Inliner.inlineCall(path)
+
+      report.echo(s"inlined: ${inlined}")
 
       // destructure i into its object, type check the object?
 
