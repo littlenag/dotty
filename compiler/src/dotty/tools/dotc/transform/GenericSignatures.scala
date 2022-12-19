@@ -5,16 +5,19 @@ package transform
 import core.Annotations._
 import core.Contexts._
 import core.Phases._
+import core.Decorators.*
 import core.Definitions
 import core.Flags._
 import core.Names.Name
 import core.Symbols._
-import core.TypeApplications.TypeParamInfo
-import core.TypeErasure.{erasedGlb, erasure, isGenericArrayElement}
+import core.TypeApplications.{EtaExpansion, TypeParamInfo}
+import core.TypeErasure.{erasedGlb, erasure, fullErasure, isGenericArrayElement}
 import core.Types._
 import core.classfile.ClassfileConstants
 import SymUtils._
 import TypeUtils._
+import config.Printers.transforms
+import reporting.trace
 import java.lang.StringBuilder
 
 import scala.collection.mutable.ListBuffer
@@ -76,7 +79,7 @@ object GenericSignatures {
      *        of `AndType` in `jsig` which already supports `def foo(x: A & Object)`.
      */
     def boundsSig(bounds: List[Type]): Unit = {
-      val (repr :: _, others) = splitIntersection(bounds)
+      val (repr :: _, others) = splitIntersection(bounds): @unchecked
       builder.append(':')
 
       // In Java, intersections always erase to their first member, so put
@@ -130,12 +133,12 @@ object GenericSignatures {
           else
             Right(parent))
 
-    def paramSig(param: LambdaParam): Unit = {
-      builder.append(sanitizeName(param.paramName))
+    def paramSig(param: TypeParamInfo): Unit = {
+      builder.append(sanitizeName(param.paramName.lastPart))
       boundsSig(hiBounds(param.paramInfo.bounds))
     }
 
-    def polyParamSig(tparams: List[LambdaParam]): Unit =
+    def polyParamSig(tparams: List[TypeParamInfo]): Unit =
       if (tparams.nonEmpty) {
         builder.append('<')
         tparams.foreach(paramSig)
@@ -166,6 +169,7 @@ object GenericSignatures {
     // a type parameter or similar) must go through here or the signature is
     // likely to end up with Foo<T>.Empty where it needs Foo<T>.Empty$.
     def fullNameInSig(sym: Symbol): Unit = {
+      assert(sym.isClass)
       val name = atPhase(genBCodePhase) { sanitizeName(sym.fullName).replace('.', '/') }
       builder.append('L').nn.append(name)
     }
@@ -183,13 +187,14 @@ object GenericSignatures {
               boxedSig(bounds.lo)
             }
             else builder.append('*')
-          case PolyType(_, res) =>
-            builder.append('*') // scala/bug#7932
+          case EtaExpansion(tp) =>
+            argSig(tp)
           case _: HKTypeLambda =>
-            fullNameInSig(tp.typeSymbol)
-            builder.append(';')
+            builder.append('*')
           case _ =>
-            boxedSig(tp)
+            boxedSig(tp.widenDealias.widenNullaryMethod)
+              // `tp` might be a singleton type referring to a getter.
+              // Hence the widenNullaryMethod.
         }
 
       if (pre.exists) {
@@ -234,7 +239,11 @@ object GenericSignatures {
       tp match {
 
         case ref @ TypeParamRef(_: PolyType, _) =>
-          typeParamSig(ref.paramName.lastPart)
+          val erasedUnderlying = fullErasure(ref.underlying.bounds.hi)
+          // don't emit type param name if the param is upper-bounded by a primitive type (including via a value class)
+          if erasedUnderlying.isPrimitiveValueType then
+            jsig(erasedUnderlying, toplevel, primitiveOK)
+          else typeParamSig(ref.paramName.lastPart)
 
         case defn.ArrayOf(elemtp) =>
           if (isGenericArrayElement(elemtp, isScala2 = false))
@@ -265,7 +274,7 @@ object GenericSignatures {
             else if (sym == defn.UnitClass) jsig(defn.BoxedUnitClass.typeRef)
             else builder.append(defn.typeTag(sym.info))
           else if (ValueClasses.isDerivedValueClass(sym)) {
-            val erasedUnderlying = core.TypeErasure.fullErasure(tp)
+            val erasedUnderlying = fullErasure(tp)
             if (erasedUnderlying.isPrimitiveValueType && !primitiveOK)
               classSig(sym, pre, args)
             else
@@ -332,15 +341,6 @@ object GenericSignatures {
           jsig(repr, primitiveOK = primitiveOK)
 
         case ci: ClassInfo =>
-          def polyParamSig(tparams: List[TypeParamInfo]): Unit =
-            if (tparams.nonEmpty) {
-              builder.append('<')
-              tparams.foreach { tp =>
-                builder.append(sanitizeName(tp.paramName.lastPart))
-                boundsSig(hiBounds(tp.paramInfo.bounds))
-              }
-              builder.append('>')
-            }
           val tParams = tp.typeParams
           if (toplevel) polyParamSig(tParams)
           superSig(ci.typeSymbol, ci.parents)

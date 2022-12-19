@@ -1,24 +1,8 @@
 package dotty
 
 package object tools {
-  // Ensure this object is already classloaded, since it's only actually used
-  // when handling stack overflows and every operation (including class loading)
-  // risks failing.
-  dotty.tools.dotc.core.handleRecursive
 
   val ListOfNil: List[Nil.type] = Nil :: Nil
-
-  /** True if two lists have the same length.  Since calling length on linear sequences
-   *  is O(n), it is an inadvisable way to test length equality.
-   */
-  final def sameLength[T](xs: List[T], ys: List[T]): Boolean = xs match {
-    case _ :: xs1 =>
-      ys match {
-        case _ :: ys1 => sameLength(xs1, ys1)
-        case _ => false
-      }
-    case _ => ys.isEmpty
-  }
 
   /** Throws an `UnsupportedOperationException` with the given method name. */
   def unsupported(methodName: String): Nothing =
@@ -30,7 +14,7 @@ package object tools {
      *  Flow-typing under explicit nulls will automatically insert many necessary
      *  occurrences of uncheckedNN.
      */
-    inline def uncheckedNN: T = x.asInstanceOf[T]
+    transparent inline def uncheckedNN: T = x.asInstanceOf[T]
 
     inline def toOption: Option[T] =
       if x == null then None else Some(x.asInstanceOf[T])
@@ -54,4 +38,16 @@ package object tools {
 
   def unreachable(x: Any = "<< this case was declared unreachable >>"): Nothing =
     throw new MatchError(x)
-}
+
+  transparent inline def assertShort(inline assertion: Boolean, inline message: Any = null): Unit =
+    if !assertion then
+      val msg = message
+      val e = if msg == null then AssertionError() else AssertionError("assertion failed: " + msg)
+      e.setStackTrace(Array())
+      throw e
+
+  // Ensure this object is already classloaded, since it's only actually used
+  // when handling stack overflows and every operation (including class loading)
+  // risks failing.
+  dotty.tools.dotc.core.handleRecursive
+ }

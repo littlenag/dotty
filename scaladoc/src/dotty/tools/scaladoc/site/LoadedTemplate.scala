@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 import org.jsoup.Jsoup
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 
 case class LazyEntry(getKey: String, value: () => String) extends JMapEntry[String, Object]:
@@ -42,12 +42,10 @@ case class LoadedTemplate(
     val subpages = children.filterNot(_.hidden).map(_.lazyTemplateProperties(ctx))
     def getMap(key: String) = templateFile.settings.getOrElse(key, Map.empty).asInstanceOf[Map[String, Object]]
 
-    val sourceLinks = if !file.exists() then Nil else
-      // TODO (https://github.com/lampepfl/scala3doc/issues/240): configure source root
-      // toRealPath is used to turn symlinks into proper paths
-      val actualPath = Paths.get("").toAbsolutePath.relativize(file.toPath.toRealPath())
+    val sourceLinks = if !templateFile.file.exists() then Nil else
+      val actualPath = templateFile.file.toPath
       ctx.sourceLinks.pathTo(actualPath).map("viewSource" -> _ ) ++
-        ctx.sourceLinks.pathTo(actualPath, operation = "edit", optionalRevision = Some("master")).map("editSource" -> _)
+        ctx.sourceLinks.pathTo(actualPath, operation = "edit").map("editSource" -> _)
 
     val updatedSettings = templateFile.settings ++ ctx.projectWideProperties +
       ("site" -> (getMap("site") + ("subpages" -> subpages))) + ("urls" -> sourceLinks.toMap) +

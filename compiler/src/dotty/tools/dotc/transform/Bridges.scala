@@ -37,7 +37,7 @@ class Bridges(root: ClassSymbol, thisPhase: DenotTransformer)(using Context) {
     override def parents = Array(root.superClass)
 
     override def exclude(sym: Symbol) =
-      !sym.isOneOf(MethodOrModule) || super.exclude(sym)
+      !sym.isOneOf(MethodOrModule) || sym.isAllOf(Module | JavaDefined) || super.exclude(sym)
 
     override def canBeHandledByParent(sym1: Symbol, sym2: Symbol, parent: Symbol): Boolean =
       OverridingPairs.isOverridingPair(sym1, sym2, parent.thisType)
@@ -170,7 +170,7 @@ class Bridges(root: ClassSymbol, thisPhase: DenotTransformer)(using Context) {
    *  time deferred methods in `stats` that are replaced by a bridge with the same signature.
    */
   def add(stats: List[untpd.Tree]): List[untpd.Tree] =
-    val opc = new BridgesCursor()(using preErasureCtx)
+    val opc = inContext(preErasureCtx) { new BridgesCursor }
     while opc.hasNext do
       if !opc.overriding.is(Deferred) then
         addBridgeIfNeeded(opc.overriding, opc.overridden)

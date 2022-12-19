@@ -20,7 +20,6 @@ import java.util.UUID
 import scala.collection.immutable
 import scala.collection.mutable.{ ListBuffer, ArrayBuffer }
 import scala.annotation.switch
-import tasty.TastyVersion
 import typer.Checking.checkNonCyclic
 import io.{AbstractFile, ZipArchive}
 import scala.util.control.NonFatal
@@ -166,11 +165,7 @@ class ClassfileParser(
      *  Updates the read pointer of 'in'. */
     def parseParents: List[Type] = {
       val superType =
-        if (isAnnotation) {
-          in.nextChar
-          defn.AnnotationClass.typeRef
-        }
-        else if (classRoot.symbol == defn.ComparableClass ||
+        if (classRoot.symbol == defn.ComparableClass ||
                  classRoot.symbol == defn.JavaCloneableClass ||
                  classRoot.symbol == defn.JavaSerializableClass) {
           // Treat these interfaces as universal traits
@@ -187,7 +182,6 @@ class ClassfileParser(
         // Consequently, no best implicit for the "Integral" evidence parameter of "range"
         // is found. Previously, this worked because of weak conformance, which has been dropped.
 
-      if (isAnnotation) ifaces = defn.ClassfileAnnotationClass.typeRef :: ifaces
       superType :: ifaces
     }
 
@@ -276,6 +270,9 @@ class ClassfileParser(
     def complete(denot: SymDenotation)(using Context): Unit = {
       val sym = denot.symbol
       val isEnum = (jflags & JAVA_ACC_ENUM) != 0
+      val isNative = (jflags & JAVA_ACC_NATIVE) != 0
+      val isTransient = (jflags & JAVA_ACC_TRANSIENT) != 0
+      val isVolatile = (jflags & JAVA_ACC_VOLATILE) != 0
       val isConstructor = name eq nme.CONSTRUCTOR
 
       /** Strip leading outer param from constructor and trailing access tag for
@@ -283,7 +280,7 @@ class ClassfileParser(
         */
       def normalizeConstructorParams() = innerClasses.get(currentClassName.toString) match {
         case Some(entry) if !isStatic(entry.jflags) =>
-          val mt @ MethodTpe(paramNames, paramTypes, resultType) = denot.info
+          val mt @ MethodTpe(paramNames, paramTypes, resultType) = denot.info: @unchecked
           var normalizedParamNames = paramNames.tail
           var normalizedParamTypes = paramTypes.tail
           if ((jflags & JAVA_ACC_SYNTHETIC) != 0) {
@@ -314,6 +311,12 @@ class ClassfileParser(
       val isVarargs = denot.is(Flags.Method) && (jflags & JAVA_ACC_VARARGS) != 0
       denot.info = sigToType(sig, isVarargs = isVarargs)
       if (isConstructor) normalizeConstructorParams()
+      if isNative then
+        attrCompleter.annotations ::= Annotation.deferredSymAndTree(defn.NativeAnnot)(New(defn.NativeAnnot.typeRef, Nil))
+      if isTransient then
+        attrCompleter.annotations ::= Annotation.deferredSymAndTree(defn.TransientAnnot)(New(defn.TransientAnnot.typeRef, Nil))
+      if isVolatile then
+        attrCompleter.annotations ::= Annotation.deferredSymAndTree(defn.VolatileAnnot)(New(defn.VolatileAnnot.typeRef, Nil))
       denot.info = translateTempPoly(attrCompleter.complete(denot.info, isVarargs))
       if (isConstructor) normalizeConstructorInfo()
 
@@ -323,7 +326,7 @@ class ClassfileParser(
       if (isEnum) {
         val enumClass = sym.owner.linkedClass
         if (!enumClass.exists)
-          report.warning(s"no linked class for java enum $sym in ${sym.owner}. A referencing class file might be missing an InnerClasses entry.")
+          report.warning(em"no linked class for java enum $sym in ${sym.owner}. A referencing class file might be missing an InnerClasses entry.")
         else {
           if (!enumClass.is(Flags.Sealed)) enumClass.setFlag(Flags.AbstractSealed)
           enumClass.addAnnotation(Annotation.Child(sym, NoSpan))
@@ -653,7 +656,7 @@ class ClassfileParser(
       case tp: TypeRef if tp.denot.infoOrCompleter.isInstanceOf[StubInfo] =>
         // Silently ignore missing annotation classes like javac
         if ctx.debug then
-          report.warning(i"Error while parsing annotations in ${classfile}: annotation class $tp not present on classpath")
+          report.warning(em"Error while parsing annotations in ${classfile}: annotation class $tp not present on classpath")
         None
       case _ =>
         if (hasError || skip) None
@@ -668,7 +671,7 @@ class ClassfileParser(
       // the classpath would *not* end up here. A class not found is signaled
       // with a `FatalError` exception, handled above. Here you'd end up after a NPE (for example),
       // and that should never be swallowed silently.
-      report.warning("Caught: " + ex + " while parsing annotations in " + classfile)
+      report.warning(em"Caught: $ex while parsing annotations in $classfile")
       if (ctx.debug) ex.printStackTrace()
 
       None // ignore malformed annotations
@@ -750,7 +753,7 @@ class ClassfileParser(
         case tpnme.ConstantValueATTR =>
           val c = pool.getConstant(in.nextChar)
           if (c ne null) res.constant = c
-          else report.warning(s"Invalid constant in attribute of ${sym.showLocated} while parsing ${classfile}")
+          else report.warning(em"Invalid constant in attribute of ${sym.showLocated} while parsing ${classfile}")
 
         case tpnme.MethodParametersATTR =>
           val paramCount = in.nextByte
@@ -837,7 +840,7 @@ class ClassfileParser(
 
   class AnnotConstructorCompleter(classInfo: TempClassInfoType) extends LazyType {
     def complete(denot: SymDenotation)(using Context): Unit = {
-      val attrs = classInfo.decls.toList.filter(sym => sym.isTerm && sym != denot.symbol)
+      val attrs = classInfo.decls.toList.filter(sym => sym.isTerm && sym != denot.symbol && sym.name != nme.CONSTRUCTOR)
       val paramNames = attrs.map(_.name.asTermName)
       val paramTypes = attrs.map(_.info.resultType)
       denot.info = MethodType(paramNames, paramTypes, classRoot.typeRef)
@@ -871,7 +874,7 @@ class ClassfileParser(
 
   /** Parse inner classes. Expects `in.bp` to point to the superclass entry.
    *  Restores the old `bp`.
-   *  @return true iff classfile is from Scala, so no Java info needs to be read.
+   *  @return Some(unpickler) iff classfile is from Scala, so no Java info needs to be read.
    */
   def unpickleOrParseInnerClasses()(using ctx: Context, in: DataReader): Option[Embedded] = {
     val oldbp = in.bp
@@ -914,7 +917,7 @@ class ClassfileParser(
       }
 
       def unpickleTASTY(bytes: Array[Byte]): Some[Embedded]  = {
-        val unpickler = new tasty.DottyUnpickler(bytes, ctx.tastyVersion)
+        val unpickler = new tasty.DottyUnpickler(bytes)
         unpickler.enter(roots = Set(classRoot, moduleRoot, moduleRoot.sourceModule))(using ctx.withSource(util.NoSource))
         Some(unpickler)
       }
@@ -964,7 +967,7 @@ class ClassfileParser(
                 }
               }
               else {
-                report.error(s"Could not find $path in ${classfile.underlyingSource}")
+                report.error(em"Could not find $path in ${classfile.underlyingSource}")
                 Array.empty
               }
             case _ =>
@@ -972,7 +975,7 @@ class ClassfileParser(
               val name = classfile.name.stripSuffix(".class") + ".tasty"
               val tastyFileOrNull = dir.lookupName(name, false)
               if (tastyFileOrNull == null) {
-                report.error(s"Could not find TASTY file $name under $dir")
+                report.error(em"Could not find TASTY file $name under $dir")
                 Array.empty
               } else
                 tastyFileOrNull.toByteArray
@@ -980,44 +983,19 @@ class ClassfileParser(
           if (tastyBytes.nonEmpty) {
             val reader = new TastyReader(bytes, 0, 16)
             val expectedUUID = new UUID(reader.readUncompressedLong(), reader.readUncompressedLong())
-            val tastyHeader = new TastyHeaderUnpickler(tastyBytes).readFullHeader()
-            val fileTastyVersion = TastyVersion(tastyHeader.majorVersion, tastyHeader.minorVersion, tastyHeader.experimentalVersion)
-            val tastyUUID = tastyHeader.uuid
+            val tastyUUID = new TastyHeaderUnpickler(tastyBytes).readHeader()
             if (expectedUUID != tastyUUID)
               report.warning(s"$classfile is out of sync with its TASTy file. Loaded TASTy file. Try cleaning the project to fix this issue", NoSourcePosition)
-
-            val tastyFilePath = classfile.path.stripSuffix(".class") + ".tasty"
-
-            def reportWrongTasty(reason: String, highestAllowed: TastyVersion) =
-              report.error(s"""The class ${classRoot.symbol.showFullName} cannot be loaded from file ${tastyFilePath} because $reason:
-                              |highest allowed: ${highestAllowed.show}
-                              |found:           ${fileTastyVersion.show}
-              """.stripMargin)
-
-            val isTastyReadable = fileTastyVersion.isCompatibleWith(TastyVersion.compilerVersion)
-            if !isTastyReadable then
-              reportWrongTasty("its TASTy format cannot be read by the compiler", TastyVersion.compilerVersion)
-            else
-              def isStdlibClass(cls: ClassDenotation): Boolean =
-                ctx.platform.classPath.findClassFile(cls.fullName.mangledString) match {
-                  case Some(entry: ZipArchive#Entry) =>
-                    entry.underlyingSource.map(_.name.startsWith("scala3-library_")).getOrElse(false)
-                  case _ => false
-                }
-              // While emitting older TASTy the the newer standard library used by the compiler will still be on the class path so trying to read its TASTy files should not cause a crash.
-              // This is OK however because references to elements of stdlib API are validated according to the values of their `@since` annotations.
-              // This should guarantee that the code won't crash at runtime when used with the stdlib provided by an older compiler.
-              val isTastyCompatible = fileTastyVersion.isCompatibleWith(ctx.tastyVersion) || isStdlibClass(classRoot)
-              if !isTastyCompatible then
-                reportWrongTasty(s"its TASTy format is not compatible with the one of the targeted Scala release (${ctx.scalaRelease.show})", ctx.tastyVersion)
-
             return unpickleTASTY(tastyBytes)
           }
         }
         else return unpickleTASTY(bytes)
       }
 
-      if (scan(tpnme.ScalaATTR) && !scalaUnpickleWhitelist.contains(classRoot.name))
+      if scan(tpnme.ScalaATTR) && !scalaUnpickleWhitelist.contains(classRoot.name)
+        && !(classRoot.name.startsWith("Tuple") && classRoot.name.endsWith("$sp"))
+        && !(classRoot.name.startsWith("Product") && classRoot.name.endsWith("$sp"))
+      then
         // To understand the situation, it's helpful to know that:
         // - Scalac emits the `ScalaSig` attribute for classfiles with pickled information
         // and the `Scala` attribute for everything else.
@@ -1028,7 +1006,7 @@ class ClassfileParser(
         // attribute isn't, this classfile is a compilation artifact.
         return Some(NoEmbedded)
 
-      if (scan(tpnme.RuntimeVisibleAnnotationATTR) || scan(tpnme.RuntimeInvisibleAnnotationATTR)) {
+      if (scan(tpnme.ScalaSignatureATTR) && scan(tpnme.RuntimeVisibleAnnotationATTR)) {
         val attrLen = in.nextInt
         val nAnnots = in.nextChar
         var i = 0
@@ -1039,14 +1017,10 @@ class ClassfileParser(
           while (j < nArgs) {
             val argName = pool.getName(in.nextChar)
             if (argName.name == nme.bytes) {
-              if (attrClass == defn.ScalaSignatureAnnot)
+              if attrClass == defn.ScalaSignatureAnnot then
                 return unpickleScala(parseScalaSigBytes)
-              else if (attrClass == defn.ScalaLongSignatureAnnot)
+              else if attrClass == defn.ScalaLongSignatureAnnot then
                 return unpickleScala(parseScalaLongSigBytes)
-              else if (attrClass == defn.TASTYSignatureAnnot)
-                return unpickleTASTY(parseScalaSigBytes)
-              else if (attrClass == defn.TASTYLongSignatureAnnot)
-                return unpickleTASTY(parseScalaLongSigBytes)
             }
             parseAnnotArg(skip = true)
             j += 1
@@ -1127,7 +1101,16 @@ class ClassfileParser(
       val outerName = entry.strippedOuter
       val innerName = entry.originalName
       val owner = classNameToSymbol(outerName)
-      val result = atPhase(typerPhase)(getMember(owner, innerName.toTypeName))
+      val result = owner.denot.infoOrCompleter match
+        case _: StubInfo if hasAnnotation(entry.jflags) =>
+          requiredClass(innerName.toTypeName)
+            // It's okay for the classfiles of Java annotations to be missing
+            // from the classpath. If an annotation is defined as an inner class
+            // we need to avoid forcing the outer class symbol here, and instead
+            // return a new stub symbol for the inner class. This is tested by
+            // `surviveMissingInnerClassAnnot` in AnnotationsTests.scala
+        case _ =>
+          atPhase(typerPhase)(getMember(owner, innerName.toTypeName))
       assert(result ne NoSymbol,
         i"""failure to resolve inner class:
            |externalName = ${entry.externalName},

@@ -1,7 +1,7 @@
 ---
 layout: doc-page
 title: "Erased Definitions - More Details"
-movedTo: https://docs.scala-lang.org/scala3/reference/experimental/erased-defs-spec.html
+nightlyOf: https://docs.scala-lang.org/scala3/reference/experimental/erased-defs-spec.html
 ---
 
 TODO: complete
@@ -62,3 +62,9 @@ TODO: complete
 7. Overriding
    * Member definitions overriding each other must both be `erased` or not be `erased`
    * `def foo(x: T): U` cannot be overridden by `def foo(erased x: T): U` and vice-versa
+   *
+
+
+8. Type Restrictions
+   * For dependent functions, `erased` parameters are limited to realizable types, that is, types that are inhabited by non-null values.
+     This restriction stops us from using a bad bound introduced by an erased value, which leads to unsoundness (see #4060).

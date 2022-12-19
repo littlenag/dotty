@@ -114,7 +114,7 @@ class PCPCheckAndHeal(@constructorOnly ictx: Context) extends TreeMapWithStages(
 
     if body.isTerm then
       // `quoted.runtime.Expr.quote[T](<body>)`  --> `quoted.runtime.Expr.quote[T2](<body2>)`
-      val TypeApply(fun, targs) = quote.fun
+      val TypeApply(fun, targs) = quote.fun: @unchecked
       val targs2 = targs.map(targ => TypeTree(healTypeOfTerm(quote.fun.srcPos)(targ.tpe)))
       cpy.Apply(quote)(cpy.TypeApply(quote.fun)(fun, targs2), body2 :: Nil)
     else
@@ -125,7 +125,7 @@ class PCPCheckAndHeal(@constructorOnly ictx: Context) extends TreeMapWithStages(
           ref(x)
         case _ =>
           // `quoted.Type.of[<body>](quotes)`  --> `quoted.Type.of[<body2>](quotes)`
-          val TypeApply(fun, _) = quote.fun
+          val TypeApply(fun, _) = quote.fun: @unchecked
           cpy.Apply(quote)(cpy.TypeApply(quote.fun)(fun, body2 :: Nil), quotes)
   }
 
@@ -246,13 +246,14 @@ class PCPCheckAndHeal(@constructorOnly ictx: Context) extends TreeMapWithStages(
         checkStable(tp, pos, "type witness")
         getQuoteTypeTags.getTagRef(tp)
       case _: SearchFailureType =>
-        report.error(i"""Reference to $tp within quotes requires a given $reqType in scope.
-                     |${ctx.typer.missingArgMsg(tag, reqType, "")}
-                     |
-                     |""", pos)
+        report.error(
+          ctx.typer.missingArgMsg(tag, reqType, "")
+            .prepend(i"Reference to $tp within quotes requires a given $reqType in scope.\n")
+            .append("\n"),
+            pos)
         tp
       case _ =>
-        report.error(i"""Reference to $tp within quotes requires a given $reqType in scope.
+        report.error(em"""Reference to $tp within quotes requires a given $reqType in scope.
                      |
                      |""", pos)
         tp

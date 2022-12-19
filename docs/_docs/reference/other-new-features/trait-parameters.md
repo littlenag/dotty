@@ -1,7 +1,7 @@
 ---
 layout: doc-page
 title: "Trait Parameters"
-movedTo: https://docs.scala-lang.org/scala3/reference/other-new-features/trait-parameters.html
+nightlyOf: https://docs.scala-lang.org/scala3/reference/other-new-features/trait-parameters.html
 ---
 
 Scala 3 allows traits to have parameters, just like classes have parameters.
@@ -53,7 +53,7 @@ The correct way to write `E` is to extend both `Greeting` and
 class E extends Greeting("Bob"), FormalGreeting
 ```
 
-### Traits With Context Parameters
+## Traits With Context Parameters
 
 This "explicit extension required" rule is relaxed if the missing trait contains only
 [context parameters](../contextual/using-clauses.md). In that case the trait reference is

@@ -213,18 +213,18 @@ class ReplCompilerTests extends ReplTest:
   }
 
   @Test def `i10214 must show classic MatchError` = initially {
-    run("val 1 = 2")
+    run("val 1 = 2: @unchecked")
     assertEquals("scala.MatchError: 2 (of class java.lang.Integer)", storedOutput().linesIterator.next())
   }
   @Test def `i10214 must show useful regex MatchError` =
     initially {
       run("""val r = raw"\d+".r""")
     } andThen {
-      run("""val r() = "abc"""")
+      run("""val r() = "abc": @unchecked""")
       assertEquals("scala.MatchError: abc (of class java.lang.String)", storedOutput().linesIterator.drop(1).next())
     }
   @Test def `i10214 must show MatchError on literal type` = initially {
-    run("val (x: 1) = 2")
+    run("val (x: 1) = 2: @unchecked")
     assertEquals("scala.MatchError: 2 (of class java.lang.Integer)", storedOutput().linesIterator.next())
   }
   @Test def `i12920 must truncate stack trace to user code` = initially {
@@ -328,7 +328,7 @@ class ReplCompilerTests extends ReplTest:
   }
 
   @Test def i14473 = initially {
-    run("""val (x,y) = if true then "hi" else (42,17)""")
+    run("""val (x,y) = (if true then "hi" else (42,17)): @unchecked""")
     val all = lines()
     assertEquals(2, all.length)
     assertEquals("scala.MatchError: hi (of class java.lang.String)", all.head)
@@ -346,27 +346,6 @@ class ReplCompilerTests extends ReplTest:
     assertEquals(3, all.length)
     assertEquals("java.lang.AssertionError: assertion failed", all.head)
   }
-
-  @Test def i14491 =
-    initially {
-      run("import language.experimental.fewerBraces")
-    } andThen {
-      run("""|val x = Seq(7,8,9).apply:
-             |  1
-             |""".stripMargin)
-      assertEquals("val x: Int = 8", storedOutput().trim)
-    }
-    initially {
-      run("""|import language.experimental.fewerBraces
-             |import language.experimental.fewerBraces as _
-             |""".stripMargin)
-    } andThen {
-      run("""|val x = Seq(7,8,9).apply:
-             |  1
-             |""".stripMargin)
-      assert("expected error if fewerBraces is unimported",
-        lines().exists(_.contains("missing arguments for method apply")))
-    }
 
 object ReplCompilerTests:
 

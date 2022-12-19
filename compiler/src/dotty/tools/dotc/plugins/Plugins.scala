@@ -5,6 +5,7 @@ import scala.language.unsafeNulls
 
 import core._
 import Contexts._
+import Decorators.em
 import config.{ PathResolver, Feature }
 import dotty.tools.io._
 import Phases._
@@ -51,7 +52,7 @@ trait Plugins {
     }
     else _roughPluginsList
 
-  /** Load all available plugins.  Skips plugins that
+  /** Load all available plugins. Skips plugins that
    *  either have the same name as another one, or which
    *  define a phase name that another one does.
    */
@@ -62,7 +63,7 @@ trait Plugins {
       plugNames: Set[String]): List[Plugin] = {
       if (plugins.isEmpty) return Nil // early return
 
-      val plug :: tail      = plugins
+      val plug :: tail      = plugins: @unchecked
       def withoutPlug       = pick(tail, plugNames)
       def withPlug          = plug :: pick(tail, plugNames + plug.name)
 
@@ -83,14 +84,14 @@ trait Plugins {
 
     // Verify required plugins are present.
     for (req <- ctx.settings.require.value ; if !(plugs exists (_.name == req)))
-      report.error("Missing required plugin: " + req)
+      report.error(em"Missing required plugin: $req")
 
     // Verify no non-existent plugin given with -P
     for {
       opt <- ctx.settings.pluginOptions.value
       if !(plugs exists (opt startsWith _.name + ":"))
     }
-    report.error("bad option: -P:" + opt)
+    report.error(em"bad option: -P:$opt")
 
     plugs
   }

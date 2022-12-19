@@ -1,4 +1,5 @@
-package dotty.tools.dotc
+package dotty.tools
+package dotc
 package transform
 package patmat
 
@@ -186,7 +187,7 @@ trait SpaceLogic {
       case (Typ(tp1, _), Prod(tp2, fun, ss)) =>
         isSubType(tp1, tp2)
         && covers(fun, tp1, ss.length)
-        && isSubspace(Prod(tp2, fun, signature(fun, tp2, ss.length).map(Typ(_, false))), b)
+        && isSubspace(Prod(tp2, fun, signature(fun, tp1, ss.length).map(Typ(_, false))), b)
       case (Prod(_, fun1, ss1), Prod(_, fun2, ss2)) =>
         isSameUnapply(fun1, fun2) && ss1.zip(ss2).forall((isSubspace _).tupled)
     }
@@ -305,15 +306,16 @@ object SpaceEngine {
       val isEmptyTp = extractorMemberType(unappResult, nme.isEmpty, NoSourcePosition)
       isEmptyTp <:< ConstantType(Constant(false))
     }
+    || unappResult.derivesFrom(defn.NonEmptyTupleClass)
   }
 
   /** Is the unapply or unapplySeq irrefutable?
    *  @param  unapp   The unapply function tree
    */
   def isIrrefutable(unapp: tpd.Tree, argLen: Int)(using Context): Boolean = {
-    val fun1 = tpd.funPart(unapp)
-    val funRef = fun1.tpe.asInstanceOf[TermRef]
-    isIrrefutable(funRef, argLen)
+    tpd.funPart(unapp).tpe match
+      case funRef: TermRef => isIrrefutable(funRef, argLen)
+      case _: ErrorType => false
   }
 }
 
@@ -533,16 +535,15 @@ class SpaceEngine(using Context) extends SpaceLogic {
     val mt: MethodType = unapp.widen match {
       case mt: MethodType => mt
       case pt: PolyType   =>
-        inContext(ctx.fresh.setExploreTyperState()) {
           val tvars = pt.paramInfos.map(newTypeVar(_))
           val mt = pt.instantiate(tvars).asInstanceOf[MethodType]
           scrutineeTp <:< mt.paramInfos(0)
           // force type inference to infer a narrower type: could be singleton
           // see tests/patmat/i4227.scala
           mt.paramInfos(0) <:< scrutineeTp
+          instantiateSelected(mt, tvars)
           isFullyDefined(mt, ForceDegree.all)
           mt
-        }
     }
 
     // Case unapply:
@@ -555,7 +556,7 @@ class SpaceEngine(using Context) extends SpaceLogic {
     // Case unapplySeq:
     // 1. return the type `List[T]` where `T` is the element type of the unapplySeq return type `Seq[T]`
 
-    val resTp = mt.instantiate(scrutineeTp :: Nil).finalResultType
+    val resTp = ctx.typeAssigner.safeSubstMethodParams(mt, scrutineeTp :: Nil).finalResultType
 
     val sig =
       if (resTp.isRef(defn.BooleanClass))
@@ -591,7 +592,7 @@ class SpaceEngine(using Context) extends SpaceLogic {
   /** Whether the extractor covers the given type */
   def covers(unapp: TermRef, scrutineeTp: Type, argLen: Int): Boolean =
     SpaceEngine.isIrrefutable(unapp, argLen) || unapp.symbol == defn.TypeTest_unapply && {
-      val AppliedType(_, _ :: tp :: Nil) = unapp.prefix.widen.dealias
+      val AppliedType(_, _ :: tp :: Nil) = unapp.prefix.widen.dealias: @unchecked
       scrutineeTp <:< tp
     }
 
@@ -630,7 +631,7 @@ class SpaceEngine(using Context) extends SpaceLogic {
       case tp =>
         def getChildren(sym: Symbol): List[Symbol] =
           sym.children.flatMap { child =>
-            if child eq sym then Nil // i3145: sealed trait Baz, val x = new Baz {}, Baz.children returns Baz...
+            if child eq sym then List(sym) // i3145: sealed trait Baz, val x = new Baz {}, Baz.children returns Baz...
             else if tp.classSymbol == defn.TupleClass || tp.classSymbol == defn.NonEmptyTupleClass then
               List(child) // TupleN and TupleXXL classes are used for Tuple, but they aren't Tuple's children
             else if (child.is(Private) || child.is(Sealed)) && child.isOneOf(AbstractOrTrait) then getChildren(child)

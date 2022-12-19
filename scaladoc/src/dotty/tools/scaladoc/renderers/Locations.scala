@@ -2,7 +2,7 @@ package dotty.tools.scaladoc
 package renderers
 
 import util.HTML._
-import collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import java.net.URI
 import java.net.URL
 import dotty.tools.scaladoc.site._
@@ -47,6 +47,7 @@ trait Locations(using ctx: DocContext):
               case "<empty>" :: tail => "_empty_" :: tail
               case other => other
             if ctx.args.apiSubdirectory then "api" :: fqn else fqn
+        ctx.checkPathCompat(path)
         cache.put(dri, path)
         path
       case cached => cached

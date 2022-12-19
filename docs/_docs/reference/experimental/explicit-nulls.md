@@ -1,7 +1,7 @@
 ---
 layout: doc-page
 title: "Explicit Nulls"
-movedTo: https://docs.scala-lang.org/scala3/reference/other-new-features/explicit-nulls.html
+nightlyOf: https://docs.scala-lang.org/scala3/reference/other-new-features/explicit-nulls.html
 ---
 
 Explicit nulls is an opt-in feature that modifies the Scala type system, which makes reference types
@@ -86,7 +86,7 @@ val c = new C()
 ```
 
 The unsoundness above can be caught by the compiler with the option `-Ysafe-init`.
-More details can be found in [safe initialization](./safe-initialization.md).
+More details can be found in [safe initialization](../other-new-features/safe-initialization.md).
 
 ## Equality
 
@@ -480,7 +480,7 @@ The program in [`unsafeNulls`](https://scala-lang.org/api/3.x/scala/runtime/stdL
 For example, the following code cannot be compiled even using unsafe nulls. Because of the
 Java interoperation, the type of the get method becomes `T | Null`.
 
-```Scala
+```scala
 def head[T](xs: java.util.List[T]): T = xs.get(0) // error
 ```
 
@@ -540,4 +540,4 @@ Our strategy for binary compatibility with Scala binaries that predate explicit 
 and new libraries compiled without `-Yexplicit-nulls` is to leave the types unchanged
 and be compatible but unsound.
 
-[More details](https://dotty.epfl.ch/docs/internals/explicit-nulls.html)
+[Implementation details](https://dotty.epfl.ch/docs/internals/explicit-nulls.html)

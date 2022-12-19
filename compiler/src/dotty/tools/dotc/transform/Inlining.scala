@@ -7,14 +7,18 @@ import Contexts._
 import Symbols._
 import SymUtils._
 import dotty.tools.dotc.ast.tpd
-
+import dotty.tools.dotc.ast.Trees._
+import dotty.tools.dotc.quoted._
 import dotty.tools.dotc.core.StagingContext._
-import dotty.tools.dotc.typer.Inliner
+import dotty.tools.dotc.inlines.Inlines
 import dotty.tools.dotc.ast.TreeMapWithImplicits
+import dotty.tools.dotc.core.DenotTransformers.IdentityDenotTransformer
 
 
 /** Inlines all calls to inline methods that are not in an inline method or a quote */
-class Inlining extends MacroTransform {
+class Inlining extends MacroTransform with IdentityDenotTransformer {
+  thisPhase =>
+
   import tpd._
 
   override def phaseName: String = Inlining.name
@@ -23,8 +27,10 @@ class Inlining extends MacroTransform {
 
   override def allowsImplicitSearch: Boolean = true
 
+  override def changesMembers: Boolean = true
+
   override def run(using Context): Unit =
-    if ctx.compilationUnit.needsInlining then
+    if ctx.compilationUnit.needsInlining || ctx.compilationUnit.hasMacroAnnotations then
       try super.run
       catch case _: CompilationUnit.SuspendException => ()
 
@@ -43,7 +49,7 @@ class Inlining extends MacroTransform {
                 traverseChildren(tree)(using StagingContext.quoteContext)
               case _: GenericApply if tree.symbol.isExprSplice =>
                 traverseChildren(tree)(using StagingContext.spliceContext)
-              case tree: RefTree if !Inliner.inInlineMethod && StagingContext.level == 0 =>
+              case tree: RefTree if !Inlines.inInlineMethod && StagingContext.level == 0 =>
                 assert(!tree.symbol.isInlineMethod, tree.show)
               case _ =>
                 traverseChildren(tree)
@@ -59,18 +65,24 @@ class Inlining extends MacroTransform {
   private class InliningTreeMap extends TreeMapWithImplicits {
     override def transform(tree: Tree)(using Context): Tree = {
       tree match
-        case tree: DefTree =>
+        case tree: MemberDef =>
           if tree.symbol.is(Inline) then tree
+          else if tree.symbol.is(Param) then super.transform(tree)
+          else if
+            !tree.symbol.isPrimaryConstructor
+            && StagingContext.level == 0
+            && MacroAnnotations.hasMacroAnnotation(tree.symbol)
+          then
+            val trees = new MacroAnnotations(thisPhase).expandAnnotations(tree)
+            flatTree(trees.map(super.transform))
           else super.transform(tree)
         case _: Typed | _: Block =>
           super.transform(tree)
-        case _ if Inliner.needsInlining(tree) =>
+        case _ if Inlines.needsInlining(tree) =>
           val tree1 = super.transform(tree)
           if tree1.tpe.isError then tree1
-          else Inliner.inlineCall(tree1)
+          else Inlines.inlineCall(tree1)
         case _: GenericApply if tree.symbol.isQuote =>
-          if level == 0 then
-            ctx.compilationUnit.needsQuotePickling = true
           super.transform(tree)(using StagingContext.quoteContext)
         case _: GenericApply if tree.symbol.isExprSplice =>
           super.transform(tree)(using StagingContext.spliceContext)

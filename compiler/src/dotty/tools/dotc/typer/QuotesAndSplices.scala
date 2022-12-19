@@ -16,12 +16,13 @@ import dotty.tools.dotc.core.StdNames.*
 import dotty.tools.dotc.core.Symbols.*
 import dotty.tools.dotc.core.Types.*
 import dotty.tools.dotc.parsing.Parsers.ImportExportInfo
+import dotty.tools.dotc.inlines.PrepareInlineable
 import dotty.tools.dotc.transform.SymUtils.*
 import dotty.tools.dotc.typer.Implicits.*
 import dotty.tools.dotc.typer.Inferencing.*
 import dotty.tools.dotc.util.Spans.*
 import dotty.tools.dotc.util.Stats.record
-
+import dotty.tools.dotc.reporting.IllegalVariableInPatternAlternative
 import scala.collection.mutable
 
 
@@ -39,8 +40,6 @@ trait QuotesAndSplices {
     tree.quoted match {
       case untpd.Splice(innerExpr) if tree.isTerm && !ctx.mode.is(Mode.Pattern) =>
         report.warning("Canceled splice directly inside a quote. '{ ${ XYZ } } is equivalent to XYZ.", tree.srcPos)
-      case untpd.TypSplice(innerType) if tree.isType =>
-        report.warning("Canceled splice directly inside a quote. '[ ${ XYZ } ] is equivalent to XYZ.", tree.srcPos)
       case _ =>
     }
     val qctx = inferImplicitArg(defn.QuotesClass.typeRef, tree.span)
@@ -53,11 +52,12 @@ trait QuotesAndSplices {
     if ctx.mode.is(Mode.Pattern) then
       typedQuotePattern(tree, pt, qctx).withSpan(tree.span)
     else if tree.quoted.isType then
-      val msg = em"Consider using canonical type constructor scala.quoted.Type.of[${tree.quoted}] instead"
-      if sourceVersion.isAtLeast(`future-migration`) then report.error(msg, tree.srcPos)
-      else report.warning(msg, tree.srcPos)
-      val typeOfTree = untpd.TypeApply(untpd.ref(defn.QuotedTypeModule_of.termRef), tree.quoted :: Nil).withSpan(tree.span)
-      makeInlineable(typedTypeApply(typeOfTree, pt)(using quoteContext).select(nme.apply).appliedTo(qctx).withSpan(tree.span))
+      val msg = em"""Quoted types `'[..]` can only be used in patterns.
+                    |
+                    |Hint: To get a scala.quoted.Type[T] use scala.quoted.Type.of[T] instead.
+                    |"""
+      report.error(msg, tree.srcPos)
+      EmptyTree
     else
       val exprQuoteTree = untpd.Apply(untpd.ref(defn.QuotedRuntime_exprQuote.termRef), tree.quoted)
       makeInlineable(typedApply(exprQuoteTree, pt)(using pushQuotes(qctx)).select(nme.apply).appliedTo(qctx).withSpan(tree.span))
@@ -89,7 +89,7 @@ trait QuotesAndSplices {
         ref(defn.QuotedRuntime_exprSplice).appliedToType(argType).appliedTo(pat)
       }
       else {
-        report.error(i"Type must be fully defined.\nConsider annotating the splice using a type ascription:\n  ($tree: XYZ).", tree.expr.srcPos)
+        report.error(em"Type must be fully defined.\nConsider annotating the splice using a type ascription:\n  ($tree: XYZ).", tree.expr.srcPos)
         tree.withType(UnspecifiedErrorType)
       }
     else {
@@ -129,9 +129,9 @@ trait QuotesAndSplices {
   def typedAppliedSplice(tree: untpd.Apply, pt: Type)(using Context): Tree = {
     report.echo("typedAppliedSplice")
     assert(ctx.mode.is(Mode.QuotedPattern))
-    val untpd.Apply(splice: untpd.Splice, args) = tree
+    val untpd.Apply(splice: untpd.Splice, args) = tree: @unchecked
     if !isFullyDefined(pt, ForceDegree.flipBottom) then
-      report.error(i"Type must be fully defined.", splice.srcPos)
+      report.error(em"Type must be fully defined.", splice.srcPos)
       tree.withType(UnspecifiedErrorType)
     else if splice.isInBraces then // ${x}(...) match an application
       val typedArgs = args.map(arg => typedExpr(arg))
@@ -143,7 +143,7 @@ trait QuotesAndSplices {
         case arg: untpd.Ident =>
           typedExpr(arg)
         case arg =>
-          report.error("Open patttern exprected an identifier", arg.srcPos)
+          report.error("Open pattern expected an identifier", arg.srcPos)
           EmptyTree
       }
       if args.isEmpty then
@@ -151,30 +151,6 @@ trait QuotesAndSplices {
       val argTypes = typedArgs.map(_.tpe.widenTermRefExpr)
       val typedPat = typedSplice(splice, defn.FunctionOf(argTypes, pt))
       ref(defn.QuotedRuntimePatterns_patternHigherOrderHole).appliedToType(pt).appliedTo(typedPat, SeqLiteral(typedArgs, TypeTree(defn.AnyType)))
-  }
-
-  /** Translate ${ t: Type[T] }` into type `t.splice` while tracking the quotation level in the context */
-  def typedTypSplice(tree: untpd.TypSplice, pt: Type)(using Context): Tree = {
-    record("typedTypSplice")
-    checkSpliceOutsideQuote(tree)
-    tree.expr match {
-      case untpd.Quote(innerType) if innerType.isType =>
-        report.warning("Canceled quote directly inside a splice. ${ '[ XYZ ] } is equivalent to XYZ.", tree.srcPos)
-      case _ =>
-    }
-
-    if ctx.mode.is(Mode.QuotedPattern) && level == 1 then
-      report.error(
-            """`$` for quote pattern variable is not supported anymore.
-               |Use lower cased variable name without the `$` instead.""".stripMargin,
-            tree.srcPos)
-      ref(defn.NothingType)
-    else
-      val tree1 = typedSelect(untpd.Select(tree.expr, tpnme.Underlying), pt)(using spliceContext).withSpan(tree.span)
-      val msg = em"Consider using canonical type reference ${tree1.tpe} instead"
-      if sourceVersion.isAtLeast(`future-migration`) then report.error(msg, tree.srcPos)
-      else report.warning(msg, tree.srcPos)
-      tree1
   }
 
   /** Type a pattern variable name `t` in quote pattern as `${given t$giveni: Type[t @ _]}`.
@@ -195,16 +171,20 @@ trait QuotesAndSplices {
         using spliceContext.retractMode(Mode.QuotedPattern).withOwner(spliceOwner(ctx)))
     pat.select(tpnme.Underlying)
 
-  private def checkSpliceOutsideQuote(tree: untpd.Tree, inImportExportMacro: Boolean = false)(using Context): Unit =
+  def typedHole(tree: untpd.Hole, pt: Type)(using Context): Tree =
+    val tpt = typedType(tree.tpt)
+    assignType(tree, tpt)
+
+  private def checkSpliceOutsideQuote(tree: untpd.Tree)(using Context): Unit =
     report.echo(s"checkSpliceOutsideQuote inMacro=$inImportExportMacro show: ${tree.show} ${ctx.owner}\n")
-    if (level == 0 && !(ctx.owner.ownersIterator.exists(_.is(Inline)) || inImportExportMacro || tree.hasAttachment(ImportExportInfo)))
+    if (level == 0 && !(ctx.owner.ownersIterator.exists(_.isInlineMethod) || inImportExportMacro || tree.hasAttachment(ImportExportInfo)))
       report.error("Splice ${...} outside quotes '{...} or inline method", tree.srcPos)
     else if (level < 0)
       report.error(
-        s"""Splice $${...} at level $level.
-          |
-          |Inline method may contain a splice at level 0 but the contents of this splice cannot have a splice.
-          |""".stripMargin, tree.srcPos
+        em"""Splice $${...} at level $level.
+            |
+            |Inline method may contain a splice at level 0 but the contents of this splice cannot have a splice.
+            |""", tree.srcPos
       )
 
   /** Split a typed quoted pattern is split into its type bindings, pattern expression and inner patterns.
@@ -292,7 +272,7 @@ trait QuotesAndSplices {
             transformTypeBindingTypeDef(PatMatGivenVarName.fresh(tdef.name.toTermName), tdef, typePatBuf)
           else if tdef.symbol.isClass then
             val kind = if tdef.symbol.is(Module) then "objects" else "classes"
-            report.error("Implementation restriction: cannot match " + kind, tree.srcPos)
+            report.error(em"Implementation restriction: cannot match $kind", tree.srcPos)
             EmptyTree
           else
             super.transform(tree)
@@ -326,7 +306,9 @@ trait QuotesAndSplices {
       }
 
       private def transformTypeBindingTypeDef(nameOfSyntheticGiven: TermName, tdef: TypeDef, buff: mutable.Builder[Tree, List[Tree]])(using Context): Tree = {
-        if (variance == -1)
+        if ctx.mode.is(Mode.InPatternAlternative) then
+          report.error(IllegalVariableInPatternAlternative(tdef.symbol.name), tdef.srcPos)
+        if variance == -1 then
           tdef.symbol.addAnnotation(Annotation(New(ref(defn.QuotedRuntimePatterns_fromAboveAnnot.typeRef)).withSpan(tdef.span)))
         val bindingType = getBinding(tdef.symbol).symbol.typeRef
         val bindingTypeTpe = AppliedType(defn.QuotedTypeClass.typeRef, bindingType :: Nil)

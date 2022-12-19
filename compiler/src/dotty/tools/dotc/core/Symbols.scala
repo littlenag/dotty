@@ -348,6 +348,27 @@ object Symbols {
     def paramVariance(using Context): Variance = denot.variance
     def paramRef(using Context): TypeRef = denot.typeRef
 
+    /** Copy a symbol, overriding selective fields.
+     *  Note that `coord` and `associatedFile` will be set from the fields in `owner`, not
+     *  the fields in `sym`. */
+    def copy(using Context)(
+        owner: Symbol = this.owner,
+        name: ThisName = name,
+        flags: FlagSet = this.flags,
+        info: Type = this.info,
+        privateWithin: Symbol = this.privateWithin,
+        coord: Coord = NoCoord, // Can be `= owner.coord` once we bootstrap
+        associatedFile: AbstractFile | Null = null // Can be `= owner.associatedFile` once we bootstrap
+    ): Symbol = {
+      val coord1 = if (coord == NoCoord) owner.coord else coord
+      val associatedFile1 = if (associatedFile == null) owner.associatedFile else associatedFile
+
+      if isClass then
+        newClassSymbol(owner, name.asTypeName, flags, _ => info, privateWithin, coord1, associatedFile1)
+      else
+        newSymbol(owner, name, flags, info, privateWithin, coord1)
+    }
+
 // -------- Printing --------------------------------------------------------
 
     /** The prefix string to be used when displaying this symbol without denotation */
@@ -469,30 +490,6 @@ object Symbols {
 
   NoDenotation // force it in order to set `denot` field of NoSymbol
 
-  extension [N <: Name](sym: Symbol { type ThisName = N })(using Context) {
-    /** Copy a symbol, overriding selective fields.
-     *  Note that `coord` and `associatedFile` will be set from the fields in `owner`, not
-     *  the fields in `sym`.
-     */
-    def copy(
-        owner: Symbol = sym.owner,
-        name: N = sym.name,
-        flags: FlagSet = sym.flags,
-        info: Type = sym.info,
-        privateWithin: Symbol = sym.privateWithin,
-        coord: Coord = NoCoord, // Can be `= owner.coord` once we bootstrap
-        associatedFile: AbstractFile | Null = null // Can be `= owner.associatedFile` once we bootstrap
-    ): Symbol = {
-      val coord1 = if (coord == NoCoord) owner.coord else coord
-      val associatedFile1 = if (associatedFile == null) owner.associatedFile else associatedFile
-
-      if (sym.isClass)
-        newClassSymbol(owner, name.asTypeName, flags, _ => info, privateWithin, coord1, associatedFile1)
-      else
-        newSymbol(owner, name, flags, info, privateWithin, coord1)
-    }
-  }
-
   /** Makes all denotation operations available on symbols */
   implicit def toDenot(sym: Symbol)(using Context): SymDenotation = sym.denot
 
@@ -512,14 +509,15 @@ object Symbols {
 // ---- Symbol creation methods ----------------------------------
 
   /** Create a symbol from its fields (info may be lazy) */
-  def newSymbol[N <: Name](
+  def newSymbol[N <: Name](using Context)(
       owner: Symbol,
       name: N,
       flags: FlagSet,
       info: Type,
       privateWithin: Symbol = NoSymbol,
-      coord: Coord = NoCoord)(using Context): Symbol { type ThisName = N } = {
-    val sym = new Symbol(coord, ctx.base.nextSymId, ctx.nestingLevel).asInstanceOf[Symbol { type ThisName = N }]
+      coord: Coord = NoCoord,
+      nestingLevel: Int = ctx.nestingLevel): Symbol { type ThisName = N } = {
+    val sym = new Symbol(coord, ctx.base.nextSymId, nestingLevel).asInstanceOf[Symbol { type ThisName = N }]
     val denot = SymDenotation(sym, owner, name, flags, info, privateWithin)
     sym.denot = denot
     sym

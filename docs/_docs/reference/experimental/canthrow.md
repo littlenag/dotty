@@ -1,7 +1,7 @@
 ---
 layout: doc-page
 title: "CanThrow Capabilities"
-movedTo: https://docs.scala-lang.org/scala3/reference/experimental/canthrow.html
+nightlyOf: https://docs.scala-lang.org/scala3/reference/experimental/canthrow.html
 ---
 
 This page describes experimental support for exception checking in Scala 3. It is enabled by the language import
@@ -124,7 +124,7 @@ try
   body
 catch ...
 ```
-Note that the right-hand side of the synthesized given is `???` (undefined). This is OK since
+Note that the right-hand side of the synthesized given is `compiletime.erasedValue`. This is OK since
 this given is erased; it will not be executed at runtime.
 
 **Note 1:** The [`saferExceptions`](https://scala-lang.org/api/3.x/scala/runtime/stdLibPatches/language$$experimental$$saferExceptions$.html) feature is designed to work only with checked exceptions. An exception type is _checked_ if it is a subtype of

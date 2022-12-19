@@ -1,6 +1,6 @@
 package dotty.tools.scaladoc.tasty
 
-import collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 import dotty.tools.scaladoc._
 import dotty.tools.scaladoc.{Signature => DSignature}
 import dotty.tools.scaladoc.Inkuire
@@ -70,10 +70,16 @@ trait ClassLikeSupport:
           case tree: ClassDef => tree
       case tt: TypeTree => unpackTreeToClassDef(tt.tpe.typeSymbol.tree)
 
+    def signatureWithName(s: dotty.tools.scaladoc.Signature): dotty.tools.scaladoc.Signature =
+      s match
+          case dotty.tools.scaladoc.Type(n, Some(dri)) :: tail => dotty.tools.scaladoc.Name(n, dri) :: tail
+          case other => other
+
     def getSupertypesGraph(link: LinkToType, to: Seq[Tree]): Seq[(LinkToType, LinkToType)] =
       to.flatMap { case tree =>
         val symbol = if tree.symbol.isClassConstructor then tree.symbol.owner else tree.symbol
-        val superLink = LinkToType(tree.asSignature, symbol.dri, bareClasslikeKind(symbol))
+        val signature = signatureWithName(tree.asSignature)
+        val superLink = LinkToType(signature, symbol.dri, bareClasslikeKind(symbol))
         val nextTo = unpackTreeToClassDef(tree).parents
         if symbol.isHiddenByVisibility then getSupertypesGraph(link, nextTo)
         else Seq(link -> superLink) ++ getSupertypesGraph(superLink, nextTo)
@@ -83,14 +89,16 @@ trait ClassLikeSupport:
       .filterNot((s, t) => s.isHiddenByVisibility)
       .map {
         case (symbol, tpe) =>
-          LinkToType(tpe.asSignature, symbol.dri, bareClasslikeKind(symbol))
+          val signature = signatureWithName(tpe.asSignature)
+          LinkToType(signature, symbol.dri, bareClasslikeKind(symbol))
       }
     val selfType = classDef.self.map { (valdef: ValDef) =>
       val symbol = valdef.symbol
       val tpe = valdef.tpt.tpe
-      LinkToType(tpe.asSignature, symbol.dri, Kind.Type(false, false, Seq.empty))
+      val signature = signatureWithName(tpe.asSignature)
+      LinkToType(signature, symbol.dri, Kind.Type(false, false, Seq.empty))
     }
-    val selfSignature: DSignature = typeForClass(classDef).asSignature
+    val selfSignature: DSignature = signatureWithName(typeForClass(classDef).asSignature)
 
     val graph = HierarchyGraph.withEdges(
       getSupertypesGraph(LinkToType(selfSignature, classDef.symbol.dri, bareClasslikeKind(classDef.symbol)), unpackTreeToClassDef(classDef).parents)
@@ -102,6 +110,7 @@ trait ClassLikeSupport:
       modifiers = modifiers,
       graph = graph,
       deprecated = classDef.symbol.isDeprecated(),
+      experimental = classDef.symbol.isExperimental()
     ).copy(
       directParents = classDef.getParentsAsLinkToTypes,
       parents = supertypes,
@@ -278,10 +287,10 @@ trait ClassLikeSupport:
     def getTypeParams: List[TypeDef] =
       c.body.collect { case targ: TypeDef => targ  }.filter(_.symbol.isTypeParam)
 
-    def getCompanion: Option[DRI] = c.symbol.getCompanionSymbol
+    def getCompanion: Option[(Kind, DRI)] = c.symbol.getCompanionSymbol
       .filter(!_.flags.is(Flags.Synthetic))
       .filterNot(_.isHiddenByVisibility)
-      .map(_.dri)
+      .map(s => (bareClasslikeKind(s), s.dri))
 
 
   def parseClasslike(classDef: ClassDef, signatureOnly: Boolean = false): Member = classDef match
@@ -368,7 +377,22 @@ trait ClassLikeSupport:
       val overriddenSyms = methodSymbol.allOverriddenSymbols.map(_.owner)
       Origin.Overrides(overriddenSyms.map(s => Overridden(s.name, s.dri)).toSeq)
 
-    mkMember(methodSymbol, methodKind, memberInfo.res.asSignature)(origin = origin, deprecated = methodSymbol.isDeprecated())
+    val modifiers = methodKind match
+      case _: Kind.Given => methodSymbol
+        .getExtraModifiers()
+        .filterNot(m => m == Modifier.Lazy || m == Modifier.Final)
+      case _ => methodSymbol.getExtraModifiers()
+
+    mkMember(
+      methodSymbol,
+      methodKind,
+      method.returnTpt.tpe.asSignature
+    )(
+      modifiers = modifiers,
+      origin = origin,
+      deprecated = methodSymbol.isDeprecated(),
+      experimental = methodSymbol.isExperimental()
+    )
 
   def mkParameter(
     argument: ValDef,
@@ -436,7 +460,11 @@ trait ClassLikeSupport:
           Some(Link(l.tpe.typeSymbol.owner.name, l.tpe.typeSymbol.owner.dri))
         case _ => None
       }
-      mkMember(typeDef.symbol, Kind.Exported(kind), tpeTree.asSignature)(deprecated = typeDef.symbol.isDeprecated(), origin = Origin.ExportedFrom(origin))
+      mkMember(typeDef.symbol, Kind.Exported(kind), tpeTree.asSignature)(
+        deprecated = typeDef.symbol.isDeprecated(),
+        origin = Origin.ExportedFrom(origin),
+        experimental = typeDef.symbol.isExperimental()
+      )
     }
     else mkMember(typeDef.symbol, kind, tpeTree.asSignature)(deprecated = typeDef.symbol.isDeprecated())
 
@@ -448,7 +476,17 @@ trait ClassLikeSupport:
       else if valDef.symbol.flags.is(Flags.Enum) then Kind.EnumCase(Kind.Val)
       else defaultKind
 
-    mkMember(valDef.symbol, kind, memberInfo.res.asSignature)(deprecated = valDef.symbol.isDeprecated())
+    val modifiers = kind match
+      case _: Kind.Given => valDef.symbol
+        .getExtraModifiers()
+        .filterNot(m => m == Modifier.Lazy || m == Modifier.Final)
+      case _ => valDef.symbol.getExtraModifiers()
+
+    mkMember(valDef.symbol, kind, memberInfo.res.asSignature)(
+      modifiers = modifiers,
+      deprecated = valDef.symbol.isDeprecated(),
+      experimental = valDef.symbol.isExperimental()
+    )
 
   def mkMember(symbol: Symbol, kind: Kind, signature: DSignature)(
     modifiers: Seq[Modifier] = symbol.getExtraModifiers(),
@@ -456,8 +494,10 @@ trait ClassLikeSupport:
     inheritedFrom: Option[InheritedFrom] = None,
     graph: HierarchyGraph = HierarchyGraph.empty,
     deprecated: Option[Annotation] = None,
+    experimental: Option[Annotation] = None
   ) = Member(
     name = symbol.normalizedName,
+    fullName = symbol.fullName,
     dri = symbol.dri,
     kind = kind,
     visibility = symbol.getVisibility(),
@@ -469,7 +509,8 @@ trait ClassLikeSupport:
     inheritedFrom = inheritedFrom,
     graph = graph,
     docs = symbol.documentation,
-    deprecated = deprecated
+    deprecated = deprecated,
+    experimental = experimental
   )
 
   object EvidenceOnlyParameterList
@@ -514,7 +555,7 @@ trait ClassLikeSupport:
         case _ => Nil
 
       def nameForRef(ref: ParamRef): String =
-        val PolyType(names, _, _) = ref.binder
+        val PolyType(names, _, _) = ref.binder: @unchecked
         names(ref.paramNum)
 
       val (paramsThatLookLikeContextBounds, contextBounds) =

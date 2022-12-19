@@ -7,7 +7,7 @@ import org.junit.Test
 
 import scala.tools.asm.Opcodes._
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters._
 
 class InlineBytecodeTests extends DottyBytecodeTest {
   import ASMConverters._
@@ -108,13 +108,13 @@ class InlineBytecodeTests extends DottyBytecodeTest {
     }
   }
   */
-
+/*
   @Test def inlineNn = {
     val source =
       s"""
          |class Foo {
          |  def meth1(x: Int | Null): Int = x.nn
-         |  def meth2(x: Int | Null): Int = scala.runtime.Scala3RunTime.nn(x)
+         |  def meth2(x: Int | Null): Int = x.getClass; x
          |}
          """.stripMargin
 
@@ -132,7 +132,7 @@ class InlineBytecodeTests extends DottyBytecodeTest {
         diffInstructions(instructions1, instructions2))
     }
   }
-
+*/
   @Test def i4947 = {
     val source = """class Foo {
                    |  transparent inline def track[T](inline f: T): T = {
@@ -600,13 +600,7 @@ class InlineBytecodeTests extends DottyBytecodeTest {
       val instructions = instructionsFromMethod(fun)
       val expected = // TODO room for constant folding
         List(
-          Op(ICONST_1),
-          VarOp(ISTORE, 1),
-          Op(ICONST_2),
-          VarOp(ILOAD, 1),
-          Op(IADD),
-          Op(ICONST_3),
-          Op(IADD),
+          IntOp(BIPUSH, 6),
           Op(IRETURN),
         )
       assert(instructions == expected,

@@ -3,21 +3,28 @@ import com.typesafe.tools.mima.core._
 
 object MiMaFilters {
   val Library: Seq[ProblemFilter] = Seq(
-    // Experimental APIs that can be added in 3.2.0 or later
-    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.runtime.Tuples.append"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("scala.quoted.Quotes#reflectModule#SymbolMethods.asQuotes"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("scala.quoted.Quotes#reflectModule#ClassDefModule.apply"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("scala.quoted.Quotes#reflectModule#SymbolModule.newClass"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("scala.quoted.Quotes#reflectModule#SymbolMethods.typeRef"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("scala.quoted.Quotes#reflectModule#SymbolMethods.termRef"),
-    ProblemFilters.exclude[ReversedMissingMethodProblem]("scala.quoted.Quotes#reflectModule#TypeTreeModule.ref"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.annotation.internal.MappedAlternative"),
 
-    // Experimental `MainAnnotation` APIs. Can be added in 3.3.0 or later.
-    ProblemFilters.exclude[MissingClassProblem]("scala.annotation.MainAnnotation"),
-    ProblemFilters.exclude[MissingClassProblem]("scala.annotation.MainAnnotation$"),
-    ProblemFilters.exclude[MissingClassProblem]("scala.annotation.MainAnnotation$Command"),
-    ProblemFilters.exclude[MissingClassProblem]("scala.annotation.MainAnnotation$CommandInfo"),
-    ProblemFilters.exclude[MissingClassProblem]("scala.annotation.MainAnnotation$ParameterInfo"),
-    ProblemFilters.exclude[MissingClassProblem]("scala.annotation.MainAnnotation$ParameterAnnotation"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.runtime.LazyVals.getStaticFieldOffset"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.runtime.LazyVals.objCAS"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.LazyVals$LazyValControlState"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.LazyVals$Evaluating$"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.LazyVals$NullValue$"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.LazyVals$Waiting"),
+    ProblemFilters.exclude[MissingFieldProblem]("scala.runtime.LazyVals.Evaluating"),
+    ProblemFilters.exclude[MissingFieldProblem]("scala.runtime.LazyVals.NullValue"),
+
+    ProblemFilters.exclude[MissingFieldProblem]("scala.runtime.stdLibPatches.language#experimental.into"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.stdLibPatches.language$experimental$into$"),
+    ProblemFilters.exclude[MissingFieldProblem]("scala.runtime.stdLibPatches.language#experimental.pureFunctions"),
+    ProblemFilters.exclude[MissingFieldProblem]("scala.runtime.stdLibPatches.language#experimental.captureChecking"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.stdLibPatches.language$experimental$pureFunctions$"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.stdLibPatches.language$experimental$captureChecking$"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.caps"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.caps$Pure"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.caps$unsafe$"),
+  )
+  val TastyCore: Seq[ProblemFilter] = Seq(
+    ProblemFilters.exclude[MissingMethodProblem]("dotty.tools.tasty.TastyFormat.APPLYsigpoly"),
   )
 }

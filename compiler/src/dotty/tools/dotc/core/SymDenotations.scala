@@ -23,6 +23,8 @@ import scala.util.control.NonFatal
 import config.Config
 import reporting._
 import collection.mutable
+import transform.TypeUtils._
+import cc.{CapturingType, derivedCapturingType}
 
 import scala.annotation.internal.sharable
 
@@ -91,6 +93,10 @@ object SymDenotations {
       setFlag(
         if (myFlags.is(Trait)) NoInitsInterface & bodyFlags // no parents are initialized from a trait
         else NoInits & bodyFlags & parentFlags)
+
+    final def setStableConstructor()(using Context): Unit =
+      val ctorStable = if myFlags.is(Trait) then myFlags.is(NoInits) else isNoInitsRealClass
+      if ctorStable then primaryConstructor.setFlag(StableRealizable)
 
     def isCurrent(fs: FlagSet)(using Context): Boolean =
       def knownFlags(info: Type): FlagSet = info match
@@ -162,7 +168,8 @@ object SymDenotations {
           }
         }
         else {
-          if (myFlags.is(Touched)) throw CyclicReference(this)
+          if (myFlags.is(Touched))
+            throw CyclicReference(this)(using ctx.withOwner(symbol))
           myFlags |= Touched
           atPhase(validFor.firstPhaseId)(completer.complete(this))
         }
@@ -224,6 +231,11 @@ object SymDenotations {
       ensureCompleted(); myAnnotations
     }
 
+    /** The annotations without ensuring that the symbol is completed.
+     *  Used for diagnostics where we don't want to force symbols.
+     */
+    final def annotationsUNSAFE(using Context): List[Annotation] = myAnnotations
+
     /** Update the annotations of this denotation */
     final def annotations_=(annots: List[Annotation]): Unit =
       myAnnotations = annots
@@ -239,6 +251,15 @@ object SymDenotations {
     /** Keep only those annotations that satisfy `p` */
     final def filterAnnotations(p: Annotation => Boolean)(using Context): Unit =
       annotations = annotations.filterConserve(p)
+
+    def annotationsCarrying(meta: Set[Symbol], orNoneOf: Set[Symbol] = Set.empty)(using Context): List[Annotation] =
+      annotations.filterConserve(_.hasOneOfMetaAnnotation(meta, orNoneOf = orNoneOf))
+
+    def copyAndKeepAnnotationsCarrying(phase: DenotTransformer, meta: Set[Symbol], orNoneOf: Set[Symbol] = Set.empty)(using Context): Unit =
+      if annotations.nonEmpty then
+        val cpy = copySymDenotation()
+        cpy.annotations = annotationsCarrying(meta, orNoneOf = orNoneOf)
+        cpy.installAfter(phase)
 
     /** Optionally, the annotation matching the given class symbol */
     final def getAnnotation(cls: Symbol)(using Context): Option[Annotation] =
@@ -482,11 +503,10 @@ object SymDenotations {
         def qualify(n: SimpleName) =
           val qn = kind(prefix.toTermName, if (filler.isEmpty) n else termName(filler + n))
           if kind == FlatName && !encl.is(JavaDefined) then qn.compactified else qn
-        val fn = name replace {
-          case name: SimpleName => qualify(name)
-          case name @ AnyQualifiedName(_, _) => qualify(name.mangled.toSimpleName)
+        val fn = name.replaceDeep {
+          case n: SimpleName => qualify(n)
         }
-        if (name.isTypeName) fn.toTypeName else fn.toTermName
+        if name.isTypeName then fn.toTypeName else fn.toTermName
       }
 
     /** The encoded flat name of this denotation, where joined names are separated by `separator` characters. */
@@ -494,6 +514,30 @@ object SymDenotations {
 
     /** `fullName` where `.' is the separator character */
     def fullName(using Context): Name = fullNameSeparated(QualifiedName)
+
+    /** The fully qualified name on the JVM of the class corresponding to this symbol. */
+    def binaryClassName(using Context): String =
+      val builder = new StringBuilder
+      val pkg = enclosingPackageClass
+      if !pkg.isEffectiveRoot then
+        builder.append(pkg.fullName.mangledString)
+        builder.append(".")
+      val flatName = this.flatName
+      // Some companion objects are fake (that is, they're a compiler fiction
+      // that doesn't correspond to a class that exists at runtime), this
+      // can happen in two cases:
+      // - If a Java class has static members.
+      // - If we create constructor proxies for a class (see NamerOps#addConstructorProxies).
+      //
+      // In both cases it's may be vital that we don't return the object name.
+      // For instance, sending it to zinc: when sbt is restarted, zinc will inspect the binary
+      // dependencies to see if they're still on the classpath, if it
+      // doesn't find them it will invalidate whatever referenced them, so
+      // any reference to a fake companion will lead to extra recompilations.
+      // Instead, use the class name since it's guaranteed to exist at runtime.
+      val clsFlatName = if isOneOf(JavaDefined | ConstructorProxy) then flatName.stripModuleClassSuffix else flatName
+      builder.append(clsFlatName.mangledString)
+      builder.toString
 
     private var myTargetName: Name | Null = null
 
@@ -654,6 +698,9 @@ object SymDenotations {
       containsOpaques ||
       is(Module, butNot = Package) && owner.seesOpaques
 
+    def isProvisional(using Context): Boolean =
+      flagsUNSAFE.is(Provisional) // do not force the info to check the flag
+
     /** Is this the denotation of a self symbol of some class?
      *  This is the case if one of two conditions holds:
      *  1. It is the symbol referred to in the selfInfo part of the ClassInfo
@@ -735,7 +782,7 @@ object SymDenotations {
       * So the first call to a stable member might fail and/or produce side effects.
       */
     final def isStableMember(using Context): Boolean = {
-      def isUnstableValue = isOneOf(UnstableValueFlags) || info.isInstanceOf[ExprType]
+      def isUnstableValue = isOneOf(UnstableValueFlags) || info.isInstanceOf[ExprType] || isAllOf(InlineParam)
       isType || is(StableRealizable) || exists && !isUnstableValue
     }
 
@@ -755,7 +802,7 @@ object SymDenotations {
 
     /** Is this a getter? */
     final def isGetter(using Context): Boolean =
-      this.is(Accessor) && !originalName.isSetterName && !originalName.isScala2LocalSuffix
+      this.is(Accessor) && !originalName.isSetterName && !(originalName.isScala2LocalSuffix && symbol.owner.is(Scala2x))
 
     /** Is this a setter? */
     final def isSetter(using Context): Boolean =
@@ -795,7 +842,7 @@ object SymDenotations {
 
     /** Is this a Scala or Java annotation ? */
     def isAnnotation(using Context): Boolean =
-      isClass && derivesFrom(defn.AnnotationClass)
+      isClass && (derivesFrom(defn.AnnotationClass) || is(JavaAnnotation))
 
     /** Is this symbol a class that extends `java.io.Serializable` ? */
     def isSerializable(using Context): Boolean =
@@ -947,6 +994,26 @@ object SymDenotations {
 
     def isSkolem: Boolean = name == nme.SKOLEM
 
+    // Java language spec: https://docs.oracle.com/javase/specs/jls/se11/html/jls-15.html#jls-15.12.3
+    // Scala 2 spec: https://scala-lang.org/files/archive/spec/2.13/06-expressions.html#signature-polymorphic-methods
+    def isSignaturePolymorphic(using Context): Boolean =
+      containsSignaturePolymorphic
+      && is(JavaDefined)
+      && hasAnnotation(defn.NativeAnnot)
+      && atPhase(typerPhase)(symbol.denot).paramSymss.match
+        case List(List(p)) => p.info.isRepeatedParam
+        case _             => false
+
+    def containsSignaturePolymorphic(using Context): Boolean =
+      maybeOwner == defn.MethodHandleClass
+      || maybeOwner == defn.VarHandleClass
+
+    def originalSignaturePolymorphic(using Context): Denotation =
+      if containsSignaturePolymorphic && !isSignaturePolymorphic then
+        val d = owner.info.member(name)
+        if d.symbol.isSignaturePolymorphic then d else NoDenotation
+      else NoDenotation
+
     def isInlineMethod(using Context): Boolean =
       isAllOf(InlineMethod)
 
@@ -1042,6 +1109,8 @@ object SymDenotations {
               case tp: TermRef => tp.symbol
               case tp: Symbol => sourceOfSelf(tp.info)
               case tp: RefinedType => sourceOfSelf(tp.parent)
+              case tp: AnnotatedType => sourceOfSelf(tp.parent)
+              case tp: ThisType => tp.cls
             }
             sourceOfSelf(selfType)
           case info: LazyType =>
@@ -1140,9 +1209,9 @@ object SymDenotations {
     final def isEffectivelySealed(using Context): Boolean =
       isOneOf(FinalOrSealed) || isClass && !isOneOf(EffectivelyOpenFlags)
 
-    final def isTransparentTrait(using Context): Boolean =
-      isAllOf(TransparentTrait)
-      || defn.assumedTransparentTraits.contains(symbol)
+    final def isTransparentClass(using Context): Boolean =
+      is(TransparentType)
+      || defn.isAssumedTransparent(symbol)
       || isClass && hasAnnotation(defn.TransparentTraitAnnot)
 
     /** The class containing this denotation which has the given effective name. */
@@ -1510,8 +1579,7 @@ object SymDenotations {
       case tp: ExprType => hasSkolems(tp.resType)
       case tp: AppliedType => hasSkolems(tp.tycon) || tp.args.exists(hasSkolems)
       case tp: LambdaType => tp.paramInfos.exists(hasSkolems) || hasSkolems(tp.resType)
-      case tp: AndType => hasSkolems(tp.tp1) || hasSkolems(tp.tp2)
-      case tp: OrType  => hasSkolems(tp.tp1) || hasSkolems(tp.tp2)
+      case tp: AndOrType => hasSkolems(tp.tp1) || hasSkolems(tp.tp2)
       case tp: AnnotatedType => hasSkolems(tp.parent)
       case _ => false
     }
@@ -1616,7 +1684,7 @@ object SymDenotations {
             c.ensureCompleted()
       end completeChildrenIn
 
-      if is(Sealed) then
+      if is(Sealed) || isAllOf(JavaEnumTrait) then
         if !is(ChildrenQueried) then
           // Make sure all visible children are completed, so that
           // they show up in Child annotations. A possible child is visible if it
@@ -2167,6 +2235,9 @@ object SymDenotations {
           case tp: TypeParamRef =>  // uncachable, since baseType depends on context bounds
             recur(TypeComparer.bounds(tp).hi)
 
+          case CapturingType(parent, refs) =>
+            tp.derivedCapturingType(recur(parent), refs)
+
           case tp: TypeProxy =>
             def computeTypeProxy = {
               val superTp = tp.superType
@@ -2425,13 +2496,13 @@ object SymDenotations {
             val youngest = assocFiles.filter(_.lastModified == lastModDate)
             val chosen = youngest.head
             def ambiguousFilesMsg(f: AbstractFile) =
-              em"""Toplevel definition $name is defined in
-                  |  $chosen
-                  |and also in
-                  |  $f"""
+              i"""Toplevel definition $name is defined in
+                 |  $chosen
+                 |and also in
+                 |  $f"""
             if youngest.size > 1 then
-              throw TypeError(i"""${ambiguousFilesMsg(youngest.tail.head)}
-                                 |One of these files should be removed from the classpath.""")
+              throw TypeError(em"""${ambiguousFilesMsg(youngest.tail.head)}
+                                  |One of these files should be removed from the classpath.""")
 
             // Warn if one of the older files comes from a different container.
             // In that case picking the youngest file is not necessarily what we want,
@@ -2441,8 +2512,8 @@ object SymDenotations {
               try f.container == chosen.container catch case NonFatal(ex) => true
             if !ambiguityWarningIssued then
               for conflicting <- assocFiles.find(!sameContainer(_)) do
-                report.warning(i"""${ambiguousFilesMsg(conflicting.nn)}
-                               |Keeping only the definition in $chosen""")
+                report.warning(em"""${ambiguousFilesMsg(conflicting.nn)}
+                                   |Keeping only the definition in $chosen""")
                 ambiguityWarningIssued = true
             multi.filterWithPredicate(_.symbol.associatedFile == chosen)
       end dropStale

@@ -43,7 +43,6 @@ object Scala3:
         if content.lift(span.end - 1).exists(_ == '`') then
           (span.start + 1, span.end - 1)
         else (span.start, span.end)
-      // println(s"${start}, $end")
       val nameInSource = content.slice(start, end).mkString
       // for secondary constructors `this`
       desig match
@@ -184,8 +183,8 @@ object Scala3:
     val EmptyPackage: String = "_empty_/"
     val LocalPrefix: String = "local"
     val PackageObjectDescriptor: String = "package."
-    val s"${RootPackageName @ _}/" = RootPackage
-    val s"${EmptyPackageName @ _}/" = EmptyPackage
+    val s"${RootPackageName @ _}/" = RootPackage: @unchecked
+    val s"${EmptyPackageName @ _}/" = EmptyPackage: @unchecked
 
     def displaySymbol(symbol: Symbol)(using Context): String =
       if symbol.isPackageObject then
@@ -222,6 +221,12 @@ object Scala3:
           case NameKinds.AnyNumberedName(nme.EMPTY, _) => true
           case _                                       => false
         }
+
+      def isDynamic(using Context): Boolean =
+        name == nme.applyDynamic ||
+        name == nme.selectDynamic ||
+        name == nme.updateDynamic ||
+        name == nme.applyDynamicNamed
   end NameOps
 
   given SymbolOps: AnyRef with
@@ -416,7 +421,7 @@ object Scala3:
         unicodeEscape.replaceAllIn(symbol, m => String.valueOf(Integer.parseInt(m.group(1), 16).toChar).nn)
 
       def isJavaIdent =
-        isJavaIdentifierStart(symbol.head) && symbol.tail.forall(isJavaIdentifierPart)
+        symbol.nonEmpty && isJavaIdentifierStart(symbol.head) && symbol.tail.forall(isJavaIdentifierPart)
   end StringOps
 
   given InfoOps: AnyRef with

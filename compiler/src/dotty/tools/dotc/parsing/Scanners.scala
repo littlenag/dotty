@@ -17,8 +17,9 @@ import scala.collection.mutable
 import scala.collection.immutable.SortedMap
 import rewrites.Rewrites.patch
 import config.Feature
-import config.Feature.migrateTo3
+import config.Feature.{migrateTo3, fewerBracesEnabled}
 import config.SourceVersion.`3.0`
+import reporting.{NoProfile, Profile, Message}
 
 object Scanners {
 
@@ -75,13 +76,8 @@ object Scanners {
     def isNestedStart = token == LBRACE || token == INDENT
     def isNestedEnd = token == RBRACE || token == OUTDENT
 
-    /** Is token a COLON, after having converted COLONEOL to COLON?
-     *  The conversion means that indentation is not significant after `:`
-     *  anymore. So, warning: this is a side-effecting operation.
-     */
-    def isColon() =
-      if token == COLONEOL then token = COLON
-      token == COLON
+    def isColon =
+      token == COLONop || token == COLONfollow || token == COLONeol
 
     /** Is current token first one after a newline? */
     def isAfterLineEnd: Boolean = lineOffset >= 0
@@ -104,18 +100,22 @@ object Scanners {
       */
     var errOffset: Offset = NoOffset
 
+    /** Implements CharArrayReader's error method */
+    protected def error(msg: String, off: Offset): Unit =
+      error(msg.toMessage, off)
+
     /** Generate an error at the given offset */
-    def error(msg: String, off: Offset = offset): Unit = {
+    def error(msg: Message, off: Offset = offset): Unit = {
       errorButContinue(msg, off)
       token = ERROR
       errOffset = off
     }
 
-    def errorButContinue(msg: String, off: Offset = offset): Unit =
+    def errorButContinue(msg: Message, off: Offset = offset): Unit =
       report.error(msg, sourcePos(off))
 
     /** signal an error where the input ended in the middle of a token */
-    def incompleteInputError(msg: String): Unit = {
+    def incompleteInputError(msg: Message): Unit = {
       report.incompleteInputError(msg, sourcePos())
       token = EOF
       errOffset = offset
@@ -163,10 +163,10 @@ object Scanners {
     // disallow trailing numeric separator char, but continue lexing
     def checkNoTrailingSeparator(): Unit =
       if (!litBuf.isEmpty && isNumberSeparator(litBuf.last))
-        errorButContinue("trailing separator is not allowed", offset + litBuf.length - 1)
+        errorButContinue(em"trailing separator is not allowed", offset + litBuf.length - 1)
   }
 
-  class Scanner(source: SourceFile, override val startFrom: Offset = 0)(using Context) extends ScannerCommon(source) {
+  class Scanner(source: SourceFile, override val startFrom: Offset = 0, profile: Profile = NoProfile, allowIndent: Boolean = true)(using Context) extends ScannerCommon(source) {
     val keepComments = !ctx.settings.YdropComments.value
 
     /** A switch whether operators at the start of lines can be infix operators */
@@ -189,14 +189,14 @@ object Scanners {
     val indentSyntax =
       ((if (Config.defaultIndent) !noindentSyntax else ctx.settings.indent.value)
        || rewriteNoIndent)
-      && !isInstanceOf[LookaheadScanner]
+      && allowIndent
 
     if (rewrite) {
       val s = ctx.settings
       val rewriteTargets = List(s.newSyntax, s.oldSyntax, s.indent, s.noindent)
       val enabled = rewriteTargets.filter(_.value)
       if (enabled.length > 1)
-        error(s"illegal combination of -rewrite targets: ${enabled(0).name} and ${enabled(1).name}")
+        error(em"illegal combination of -rewrite targets: ${enabled(0).name} and ${enabled(1).name}")
     }
 
     private var myLanguageImportContext: Context = ctx
@@ -205,15 +205,6 @@ object Scanners {
 
     def featureEnabled(name: TermName) = Feature.enabled(name)(using languageImportContext)
     def erasedEnabled = featureEnabled(Feature.erasedDefinitions)
-
-    private var fewerBracesEnabledCache = false
-    private var fewerBracesEnabledCtx: Context = NoContext
-
-    def fewerBracesEnabled =
-      if fewerBracesEnabledCtx ne myLanguageImportContext then
-        fewerBracesEnabledCache = featureEnabled(Feature.fewerBraces)
-        fewerBracesEnabledCtx = myLanguageImportContext
-      fewerBracesEnabledCache
 
     private var postfixOpsEnabledCache = false
     private var postfixOpsEnabledCtx: Context = NoContext
@@ -258,7 +249,7 @@ object Scanners {
         if scala3keywords.contains(keyword) && migrateTo3 then
           val what = tokenString(keyword)
           report.errorOrMigrationWarning(
-            i"$what is now a keyword, write `$what` instead of $what to keep it as an identifier",
+            em"$what is now a keyword, write `$what` instead of $what to keep it as an identifier",
             sourcePos(),
             from = `3.0`)
           patch(source, Span(offset), "`")
@@ -305,8 +296,13 @@ object Scanners {
           // when skipping and therefore might erroneously end up syncing on a nested OUTDENT.
       if debugTokenStream then
         println(s"\nSTART SKIP AT ${sourcePos().line + 1}, $this in $currentRegion")
-      while !atStop do
+      var noProgress = 0
+        // Defensive measure to ensure we always get out of the following while loop
+        // even if source file is weirly formatted (i.e. we never reach EOF
+      while !atStop && noProgress < 3 do
+        val prevOffset = offset
         nextToken()
+        if offset == prevOffset then noProgress += 1 else noProgress = 0
       if debugTokenStream then
         println(s"\nSTOP SKIP AT ${sourcePos().line + 1}, $this in $currentRegion")
       if token == OUTDENT then dropUntil(_.isInstanceOf[Indented])
@@ -386,10 +382,12 @@ object Scanners {
      */
     def nextToken(): Unit =
       val lastToken = token
+      val lastName = name
       adjustSepRegions(lastToken)
       getNextToken(lastToken)
       if isAfterLineEnd then handleNewLine(lastToken)
-      postProcessToken()
+      postProcessToken(lastToken, lastName)
+      profile.recordNewToken()
       printState()
 
     final def printState() =
@@ -420,7 +418,7 @@ object Scanners {
       && {
         // Is current lexeme  assumed to start an expression?
         // This is the case if the lexime is one of the tokens that
-        // starts an expression or it is a COLONEOL. Furthermore, if
+        // starts an expression or it is a COLONeol. Furthermore, if
         // the previous token is in backticks, the lexeme may not be a binary operator.
         // I.e. in
         //
@@ -431,7 +429,7 @@ object Scanners {
         // in backticks and is a binary operator. Hence, `x` is not classified as a
         // leading infix operator.
         def assumeStartsExpr(lexeme: TokenData) =
-          (canStartExprTokens.contains(lexeme.token) || lexeme.token == COLONEOL)
+          (canStartExprTokens.contains(lexeme.token) || lexeme.token == COLONeol)
           && (!lexeme.isOperator || nme.raw.isUnary(lexeme.name))
         val lookahead = LookaheadScanner()
         lookahead.allowLeadingInfixOperators = false
@@ -607,12 +605,11 @@ object Scanners {
             currentRegion match
               case r: Indented =>
                 insert(OUTDENT, offset)
-                if next.token != COLON then
-                  handleNewIndentWidth(r.enclosing, ir =>
-                    errorButContinue(
-                      i"""The start of this line does not match any of the previous indentation widths.
-                          |Indentation width of current line : $nextWidth
-                          |This falls between previous widths: ${ir.width} and $lastWidth"""))
+                handleNewIndentWidth(r.enclosing, ir =>
+                  errorButContinue(
+                    em"""The start of this line does not match any of the previous indentation widths.
+                        |Indentation width of current line : $nextWidth
+                        |This falls between previous widths: ${ir.width} and $lastWidth"""))
               case r =>
                 if skipping then
                   if r.enclosing.isClosedByUndentAt(nextWidth) then
@@ -629,28 +626,35 @@ object Scanners {
             currentRegion.knownWidth = nextWidth
         else if (lastWidth != nextWidth)
           errorButContinue(spaceTabMismatchMsg(lastWidth, nextWidth))
-      if token != OUTDENT || next.token == COLON then
+      if token != OUTDENT then
         handleNewIndentWidth(currentRegion, _.otherIndentWidths += nextWidth)
+      if next.token == EMPTY then
+        profile.recordNewLine()
     end handleNewLine
 
-    def spaceTabMismatchMsg(lastWidth: IndentWidth, nextWidth: IndentWidth) =
-      i"""Incompatible combinations of tabs and spaces in indentation prefixes.
-         |Previous indent : $lastWidth
+    def spaceTabMismatchMsg(lastWidth: IndentWidth, nextWidth: IndentWidth): Message =
+      em"""Incompatible combinations of tabs and spaces in indentation prefixes.
+          |Previous indent : $lastWidth
          |Latest indent   : $nextWidth"""
 
-    def observeColonEOL(): Unit =
-      if token == COLON then
-        lookAhead()
+    def observeColonEOL(inTemplate: Boolean): Unit =
+      val enabled =
+        if token == COLONop && inTemplate then
+          report.deprecationWarning(em"`:` after symbolic operator is deprecated; use backticks around operator instead", sourcePos(offset))
+          true
+        else token == COLONfollow && (inTemplate || fewerBracesEnabled)
+      if enabled then
+        peekAhead()
         val atEOL = isAfterLineEnd || token == EOF
         reset()
-        if atEOL then token = COLONEOL
+        if atEOL then token = COLONeol
 
     def observeIndented(): Unit =
       if indentSyntax && isNewLine then
         val nextWidth = indentWidth(next.offset)
         val lastWidth = currentRegion.indentWidth
         if lastWidth < nextWidth then
-          currentRegion = Indented(nextWidth, COLONEOL, currentRegion)
+          currentRegion = Indented(nextWidth, COLONeol, currentRegion)
           offset = next.offset
           token = INDENT
     end observeIndented
@@ -668,25 +672,24 @@ object Scanners {
         insert(OUTDENT, offset)
       case _ =>
 
-    def lookAhead() =
+    def peekAhead() =
       prev.copyFrom(this)
       getNextToken(token)
       if token == END && !isEndMarker then token = IDENTIFIER
 
-    def reset() = {
+    def reset() =
       next.copyFrom(this)
       this.copyFrom(prev)
-    }
 
     def closeIndented() = currentRegion match
       case r: Indented if !r.isOutermost => insert(OUTDENT, offset)
       case _ =>
 
     /** - Join CASE + CLASS => CASECLASS, CASE + OBJECT => CASEOBJECT
-     *         SEMI + ELSE => ELSE, COLON + <EOL> => COLONEOL
+     *         SEMI + ELSE => ELSE, COLON following id/)/] => COLONfollow
      *  - Insert missing OUTDENTs at EOF
      */
-    def postProcessToken(): Unit = {
+    def postProcessToken(lastToken: Token, lastName: SimpleName): Unit = {
       def fuse(tok: Int) = {
         token = tok
         offset = prev.offset
@@ -695,12 +698,12 @@ object Scanners {
       }
       (token: @switch) match {
         case CASE =>
-          lookAhead()
+          peekAhead()
           if (token == CLASS) fuse(CASECLASS)
           else if (token == OBJECT) fuse(CASEOBJECT)
           else reset()
         case SEMI =>
-          lookAhead()
+          peekAhead()
           if (token != ELSE) reset()
         case COMMA =>
           def isEnclosedInParens(r: Region): Boolean = r match
@@ -711,7 +714,7 @@ object Scanners {
             case r: Indented if isEnclosedInParens(r.outer) =>
               insert(OUTDENT, offset)
             case _ =>
-              lookAhead()
+              peekAhead()
               if isAfterLineEnd
                  && currentRegion.commasExpected
                  && (token == RPAREN || token == RBRACKET || token == RBRACE || token == OUTDENT)
@@ -721,8 +724,10 @@ object Scanners {
                 reset()
         case END =>
           if !isEndMarker then token = IDENTIFIER
-        case COLON =>
-          if fewerBracesEnabled then observeColonEOL()
+        case COLONop =>
+          if lastToken == IDENTIFIER && lastName != null && isIdentifierStart(lastName.head)
+              || colonEOLPredecessors.contains(lastToken)
+          then token = COLONfollow
         case RBRACE | RPAREN | RBRACKET =>
           closeIndented()
         case EOF =>
@@ -782,12 +787,12 @@ object Scanners {
             putChar(low)
             res = true
           else
-            error(s"illegal character '${toUnicode(high)}${toUnicode(low)}'")
+            error(em"illegal character '${toUnicode(high)}${toUnicode(low)}'")
         else if !strict then
           putChar(high)
           res = true
         else
-          error(s"illegal character '${toUnicode(high)}' missing low surrogate")
+          error(em"illegal character '${toUnicode(high)}' missing low surrogate")
         res
       }
     private def atSupplementary(ch: Char, f: Int => Boolean): Boolean =
@@ -864,7 +869,7 @@ object Scanners {
               case _         => base = 10 ; putChar('0')
             }
             if (base != 10 && !isNumberSeparator(ch) && digit2int(ch, base) < 0)
-              error("invalid literal number")
+              error(em"invalid literal number")
           }
           fetchLeadingZero()
           getNumber()
@@ -930,13 +935,13 @@ object Scanners {
                 val isEmptyCharLit = (ch == '\'')
                 getLitChar()
                 if ch == '\'' then
-                  if isEmptyCharLit then error("empty character literal (use '\\'' for single quote)")
-                  else if litBuf.length != 1 then error("illegal codepoint in Char constant: " + litBuf.toString.map(toUnicode).mkString("'", "", "'"))
+                  if isEmptyCharLit then error(em"empty character literal (use '\\'' for single quote)")
+                  else if litBuf.length != 1 then error(em"illegal codepoint in Char constant: ${litBuf.toString.map(toUnicode).mkString("'", "", "'")}")
                   else finishCharLit()
-                else if isEmptyCharLit then error("empty character literal")
-                else error("unclosed character literal")
+                else if isEmptyCharLit then error(em"empty character literal")
+                else error(em"unclosed character literal")
               case _ =>
-                error("unclosed character literal")
+                error(em"unclosed character literal")
             }
           }
           fetchSingleQuote()
@@ -967,18 +972,18 @@ object Scanners {
         case SU =>
           if (isAtEnd) token = EOF
           else {
-            error("illegal character")
+            error(em"illegal character")
             nextChar()
           }
         case _ =>
           def fetchOther() =
             if (ch == '\u21D2') {
               nextChar(); token = ARROW
-              report.deprecationWarning("The unicode arrow `⇒` is deprecated, use `=>` instead. If you still wish to display it as one character, consider using a font with programming ligatures such as Fira Code.", sourcePos(offset))
+              report.deprecationWarning(em"The unicode arrow `⇒` is deprecated, use `=>` instead. If you still wish to display it as one character, consider using a font with programming ligatures such as Fira Code.", sourcePos(offset))
             }
             else if (ch == '\u2190') {
               nextChar(); token = LARROW
-              report.deprecationWarning("The unicode arrow `←` is deprecated, use `<-` instead. If you still wish to display it as one character, consider using a font with programming ligatures such as Fira Code.", sourcePos(offset))
+              report.deprecationWarning(em"The unicode arrow `←` is deprecated, use `<-` instead. If you still wish to display it as one character, consider using a font with programming ligatures such as Fira Code.", sourcePos(offset))
             }
             else if (Character.isUnicodeIdentifierStart(ch)) {
               putChar(ch)
@@ -993,7 +998,7 @@ object Scanners {
             else if isSupplementary(ch, isUnicodeIdentifierStart) then
               getIdentRest()
             else {
-              error(s"illegal character '${toUnicode(ch)}'")
+              error(em"illegal character '${toUnicode(ch)}'")
               nextChar()
             }
           fetchOther()
@@ -1023,7 +1028,7 @@ object Scanners {
           if (ch == '/') nextChar()
           else skipComment()
         }
-        else if (ch == SU) incompleteInputError("unclosed comment")
+        else if (ch == SU) incompleteInputError(em"unclosed comment")
         else { nextChar(); skipComment() }
       def nestedComment() = { nextChar(); skipComment() }
       val start = lastCharOffset
@@ -1059,15 +1064,18 @@ object Scanners {
      *  The token is computed via fetchToken, so complex two word
      *  tokens such as CASECLASS are not recognized.
      *  Newlines and indent/unindent tokens are skipped.
-     *
+     *  Restriction: `lookahead` is illegal if the current token is INTERPOLATIONID
      */
-     def lookahead: TokenData =
+    def lookahead: TokenData =
       if next.token == EMPTY then
-        lookAhead()
+        assert(token != INTERPOLATIONID)
+          // INTERPOLATONIDs are followed by a string literal, which can set next
+          // in peekAhead(). In that case, the following reset() would forget that token.
+        peekAhead()
         reset()
       next
 
-    class LookaheadScanner() extends Scanner(source, offset) {
+    class LookaheadScanner(val allowIndent: Boolean = false) extends Scanner(source, offset, allowIndent = allowIndent) {
       override def languageImportContext = Scanner.this.languageImportContext
     }
 
@@ -1100,11 +1108,11 @@ object Scanners {
         nextChar()
         finishNamedToken(BACKQUOTED_IDENT, target = this)
         if (name.length == 0)
-          error("empty quoted identifier")
+          error(em"empty quoted identifier")
         else if (name == nme.WILDCARD)
-          error("wildcard invalid as backquoted identifier")
+          error(em"wildcard invalid as backquoted identifier")
       }
-      else error("unclosed quoted identifier")
+      else error(em"unclosed quoted identifier")
     }
 
     private def getIdentRest(): Unit = (ch: @switch) match {
@@ -1179,7 +1187,7 @@ object Scanners {
       isSoftModifier && inModifierPosition()
 
     def isSoftModifierInParamModifierPosition: Boolean =
-      isSoftModifier && lookahead.token != COLON
+      isSoftModifier && !lookahead.isColon
 
     def isErased: Boolean = isIdent(nme.erased) && erasedEnabled
 
@@ -1198,7 +1206,7 @@ object Scanners {
         nextChar()
         token = STRINGLIT
       }
-      else error("unclosed string literal")
+      else error(em"unclosed string literal")
     }
 
     private def getRawStringLit(): Unit =
@@ -1212,7 +1220,7 @@ object Scanners {
           getRawStringLit()
       }
       else if (ch == SU)
-        incompleteInputError("unclosed multi-line string literal")
+        incompleteInputError(em"unclosed multi-line string literal")
       else {
         putChar(ch)
         nextRawChar()
@@ -1282,7 +1290,7 @@ object Scanners {
         else if atSupplementary(ch, isUnicodeIdentifierStart) then
           getInterpolatedIdentRest(hasSupplement = true)
         else
-          error("invalid string interpolation: `$$`, `$\"`, `$`ident or `$`BlockExpr expected", off = charOffset - 2)
+          error("invalid string interpolation: `$$`, `$\"`, `$`ident or `$`BlockExpr expected".toMessage, off = charOffset - 2)
           putChar('$')
           getStringPart(multiLine)
       }
@@ -1290,9 +1298,9 @@ object Scanners {
         val isUnclosedLiteral = !isUnicodeEscape && (ch == SU || (!multiLine && (ch == CR || ch == LF)))
         if (isUnclosedLiteral)
           if (multiLine)
-            incompleteInputError("unclosed multi-line string literal")
+            incompleteInputError(em"unclosed multi-line string literal")
           else
-            error("unclosed string literal")
+            error(em"unclosed string literal")
         else {
           putChar(ch)
           nextRawChar()
@@ -1444,7 +1452,7 @@ object Scanners {
     }
     def checkNoLetter(): Unit =
       if (isIdentifierPart(ch) && ch >= ' ')
-        error("Invalid literal number")
+        error(em"Invalid literal number")
 
     /** Read a number into strVal and set base
     */
@@ -1518,14 +1526,16 @@ object Scanners {
       case NEWLINE => ";"
       case NEWLINES => ";;"
       case COMMA => ","
-      case _ => showToken(token)
+      case COLONfollow | COLONeol => "':'"
+      case _ =>
+        if debugTokenStream then showTokenDetailed(token) else showToken(token)
     }
 
     /* Resume normal scanning after XML */
     def resume(lastTokenData: TokenData): Unit = {
       this.copyFrom(lastTokenData)
       if (next.token != EMPTY && !ctx.reporter.hasErrors)
-        error("unexpected end of input: possible missing '}' in XML block")
+        error(em"unexpected end of input: possible missing '}' in XML block")
 
       nextToken()
     }

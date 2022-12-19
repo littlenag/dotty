@@ -4,7 +4,7 @@ package transform
 import ast.{TreeTypeMap, tpd}
 import config.Printers.tailrec
 import core.*
-import Contexts.*, Flags.*, Symbols.*
+import Contexts.*, Flags.*, Symbols.*, Decorators.em
 import Constants.Constant
 import NameKinds.{TailLabelName, TailLocalName, TailTempName}
 import StdNames.nme
@@ -286,23 +286,11 @@ class TailRec extends MiniPhase {
     def yesTailTransform(tree: Tree)(using Context): Tree =
       transform(tree, tailPosition = true)
 
-    /** If not in tail position a tree traversal may not be needed.
-     *
-     *  A recursive  call may still be in tail position if within the return
-     *  expression of a labeled block.
-     *  A tree traversal may also be needed to report a failure to transform
-     *  a recursive call of a @tailrec annotated method (i.e. `isMandatory`).
-     */
-    private def isTraversalNeeded =
-      isMandatory || tailPositionLabeledSyms.size > 0
-
     def noTailTransform(tree: Tree)(using Context): Tree =
-      if (isTraversalNeeded) transform(tree, tailPosition = false)
-      else tree
+      transform(tree, tailPosition = false)
 
     def noTailTransforms[Tr <: Tree](trees: List[Tr])(using Context): List[Tr] =
-      if (isTraversalNeeded) trees.mapConserve(noTailTransform).asInstanceOf[List[Tr]]
-      else trees
+      trees.mapConserve(noTailTransform).asInstanceOf[List[Tr]]
 
     override def transform(tree: Tree)(using Context): Tree = {
       /* Rewrite an Apply to be considered for tail call transformation. */
@@ -315,7 +303,7 @@ class TailRec extends MiniPhase {
         def fail(reason: String) = {
           if (isMandatory) {
             failureReported = true
-            report.error(s"Cannot rewrite recursive call: $reason", tree.srcPos)
+            report.error(em"Cannot rewrite recursive call: $reason", tree.srcPos)
           }
           else
             tailrec.println("Cannot rewrite recursive call at: " + tree.span + " because: " + reason)
@@ -456,7 +444,7 @@ class TailRec extends MiniPhase {
 
         case Return(expr, from) =>
           val fromSym = from.symbol
-          val inTailPosition = fromSym.is(Label) && tailPositionLabeledSyms.contains(fromSym)
+          val inTailPosition = !fromSym.is(Label) || tailPositionLabeledSyms.contains(fromSym)
           cpy.Return(tree)(transform(expr, inTailPosition), from)
 
         case _ =>
