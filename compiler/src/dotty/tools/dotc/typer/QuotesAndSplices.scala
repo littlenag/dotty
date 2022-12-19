@@ -104,6 +104,7 @@ trait QuotesAndSplices {
         if (inImportExport)
           ctx.owner.setFlag(Macro)
         else
+          report.echo(s"owner: ${ctx.owner}")
           markAsMacro(ctx)
       }
 

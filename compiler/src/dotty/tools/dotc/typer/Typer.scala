@@ -2796,7 +2796,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
    */
   def typedUnadapted(initTree: untpd.Tree, pt: Type, locked: TypeVars)(using Context): Tree = {
     record("typedUnadapted")
-    //report.echo("typedUnadapted")
+    report.echo("typedUnadapted")
     val xtree = expanded(initTree)
     xtree.removeAttachment(TypedAhead) match {
       case Some(ttree) => ttree
@@ -2882,7 +2882,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
           case tree @ untpd.PostfixOp(qual, Ident(nme.WILDCARD)) => typedAsFunction(tree, pt)
           case untpd.EmptyTree => tpd.EmptyTree
           case tree: untpd.Quote => typedQuote(tree, pt)
-          case tree: untpd.Splice => report.echo(s"typedUnnamed Splice ${tree}"); typedSplice(tree, pt)
+          case tree: untpd.Splice => report.echo(s"typedUnnamed Splice ${tree}"); typedSplice(tree, pt) // for export macro this shouldn't be type checked
           case tree: untpd.TypSplice => typedTypSplice(tree, pt)
           case tree: untpd.MacroTree => report.error("Unexpected macro", tree.srcPos); tpd.nullLiteral  // ill-formed code may reach here
           case _ => typedUnadapted(desugar(tree), pt, locked)

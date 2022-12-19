@@ -91,11 +91,14 @@ class InlineTraitCompiling extends DottyTest {
 //        | }
 //      """.stripMargin,
 
+      //        |   inline object Foo = ${TestMacro.dothis(true)}
+
+      // issues
+      // check splice outside inline
+      //  - needs to be ok inside either import or export
+
       """
         | class Foo {
-        |
-        |   inline object Foo = ${TestMacro.dothis(true)}
-        |
         |   export ${TestMacro.dothis(true)}._
         | }
       """.stripMargin
