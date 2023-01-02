@@ -31,7 +31,7 @@ import tpd.tpes
 import Variances.alwaysInvariant
 import config.{Config, Feature}
 import config.Printers.typr
-import inlines.{Inlines, PrepareInlineable}
+import inlines.{Inliner, Inlines, PrepareInlineable}
 import parsing.JavaParsers.JavaParser
 import parsing.Parsers.Parser
 import Annotations.*
@@ -1106,13 +1106,15 @@ class Namer { typer: Typer =>
       val printer = new RefinedPrinter(ctx)
 
       // Returns an Inlined
-      val inlined = Inliner.inlineCall(path)
+      //val inlined = Inliner.inlineCall(path)
 
-      report.echo(s"inlined: ${inlined}")
+      //report.echo(s"inlined: ${inlined}")
 
       // destructure i into its object, type check the object?
 
       //addForwarders(selectors, Nil)
+
+      // this is the how and where things are expanded and added to the code tree
       val forwarders = buf.toList
       exp.pushAttachment(ExportForwarders, forwarders)
       forwarders
@@ -1123,169 +1125,6 @@ class Namer { typer: Typer =>
 
     /** The forwarders defined by export `exp` */
     class ExportForwardingHelpers(exp: Export)(using Context) {
-      val buf = new mutable.ListBuffer[tpd.MemberDef]
-
-      val Export(expr, selectors) = exp
-
-      if expr.isEmpty then
-        report.error(em"Export selector must have prefix and `.`", exp.srcPos)
-        ???
-
-      val path = typedAheadExpr(expr, AnySelectionProto)
-      checkLegalExportPath(path, selectors)
-      lazy val wildcardBound = importBound(selectors, isGiven = false)
-      lazy val givenBound = importBound(selectors, isGiven = true)
-
-      private def canForward(mbr: SingleDenotation): CanForward = {
-        import CanForward.*
-        val sym = mbr.symbol
-        if !sym.isAccessibleFrom(path.tpe) then
-          No("is not accessible")
-        else if sym.isConstructor || sym.is(ModuleClass) || sym.is(Bridge) || sym.is(ConstructorProxy) then
-          Skip
-        else if cls.derivesFrom(sym.owner) && (sym.owner == cls || !sym.is(Deferred)) then
-          No(i"is already a member of $cls")
-        else if sym.is(Override) then
-          sym.allOverriddenSymbols.find(
-            other => cls.derivesFrom(other.owner) && !other.is(Deferred)
-          ) match
-            case Some(other) => No(i"overrides ${other.showLocated}, which is already a member of $cls")
-            case None => Yes
-        else if sym.isAllOf(JavaModule) then
-          Skip
-        else Yes
-      }
-
-      def foreachDefaultGetterOf(sym: TermSymbol, op: TermSymbol => Unit): Unit =
-        var n = 0
-        for params <- sym.paramSymss; param <- params do
-          if param.isTerm then
-            if param.is(HasDefault) then
-              val getterName = DefaultGetterName(sym.name, n)
-              val getter = path.tpe.member(DefaultGetterName(sym.name, n)).symbol
-              assert(getter.exists, i"$path does not have a default getter named $getterName")
-              op(getter.asTerm)
-            n += 1
-
-      /** Add a forwarder with name `alias` or its type name equivalent to `mbr`,
-       *  provided `mbr` is accessible and of the right implicit/non-implicit kind.
-       */
-      def addForwarder(alias: TermName, mbr: SingleDenotation, span: Span): Unit =
-
-        def adaptForwarderParams(acc: List[List[tpd.Tree]], tp: Type, prefss: List[List[tpd.Tree]])
-        : List[List[tpd.Tree]] = tp match
-          case mt: MethodType
-            if mt.paramInfos.nonEmpty && mt.paramInfos.last.isRepeatedParam =>
-            // Note: in this branch we use the assumptions
-            // that `prefss.head` corresponds to `mt.paramInfos` and
-            // that `prefss.tail` corresponds to `mt.resType`
-            val init :+ vararg = prefss.head
-            val prefs = init :+ ctx.typeAssigner.seqToRepeated(vararg)
-            adaptForwarderParams(prefs :: acc, mt.resType, prefss.tail)
-          case mt: MethodOrPoly =>
-            adaptForwarderParams(prefss.head :: acc, mt.resultType, prefss.tail)
-          case _ =>
-            acc.reverse ::: prefss
-
-        if canForward(mbr) == CanForward.Yes then
-          val sym = mbr.symbol
-          val hasDefaults = sym.hasDefaultParams // compute here to ensure HasDefaultParams and NoDefaultParams flags are set
-          val forwarder =
-            if mbr.isType then
-              val forwarderName = checkNoConflict(alias.toTypeName, isPrivate = false, span)
-              var target = path.tpe.select(sym)
-              if target.typeParams.nonEmpty then
-                target = target.EtaExpand(target.typeParams)
-              newSymbol(
-                cls, forwarderName,
-                Exported | Final,
-                TypeAlias(target),
-                coord = span)
-            // Note: This will always create unparameterzied aliases. So even if the original type is
-            // a parameterized class, say `C[X]` the alias will read `type C = d.C`. We currently do
-            // allow such type aliases. If we forbid them at some point (requiring the referred type to be
-            // fully applied), we'd have to change the scheme here as well.
-            else
-              def refersToPrivate(tp: Type): Boolean = tp match
-                case tp: TermRef => tp.termSymbol.is(Private) || refersToPrivate(tp.prefix)
-                case _ => false
-              val (maybeStable, mbrInfo) =
-                if sym.isStableMember && sym.isPublic && !refersToPrivate(path.tpe) then
-                  (StableRealizable, ExprType(path.tpe.select(sym)))
-                else
-                  (EmptyFlags, mbr.info.ensureMethodic)
-              var flagMask = RetainedExportFlags
-              if sym.isTerm then flagMask |= HasDefaultParams | NoDefaultParams
-              var mbrFlags = Exported | Method | Final | maybeStable | sym.flags & flagMask
-              if sym.is(ExtensionMethod) then mbrFlags |= ExtensionMethod
-              val forwarderName = checkNoConflict(alias, isPrivate = false, span)
-              newSymbol(cls, forwarderName, mbrFlags, mbrInfo, coord = span)
-
-          forwarder.info = avoidPrivateLeaks(forwarder)
-          forwarder.addAnnotations(sym.annotations.filterConserve(_.symbol != defn.BodyAnnot))
-
-          if forwarder.isType then
-            buf += tpd.TypeDef(forwarder.asType).withSpan(span)
-          else
-            import tpd._
-            val ref = path.select(sym.asTerm)
-            val ddef = tpd.DefDef(forwarder.asTerm, prefss =>
-              ref.appliedToArgss(adaptForwarderParams(Nil, sym.info, prefss)))
-            if forwarder.isInlineMethod then
-              PrepareInlineable.registerInlineInfo(forwarder, ddef.rhs)
-            buf += ddef.withSpan(span)
-            if hasDefaults then
-              foreachDefaultGetterOf(sym.asTerm,
-                getter => addForwarder(getter.name.asTermName, getter, span))
-      end addForwarder
-
-      def addForwardersNamed(name: TermName, alias: TermName, span: Span): Unit =
-        val size = buf.size
-        val mbrs = List(name, name.toTypeName).flatMap(path.tpe.member(_).alternatives)
-        mbrs.foreach(addForwarder(alias, _, span))
-        if buf.size == size then
-          val reason = mbrs.map(canForward).collect {
-            case CanForward.No(whyNot) => i"\n$path.$name cannot be exported because it $whyNot"
-          }.headOption.getOrElse("")
-          report.error(i"""no eligible member $name at $path$reason""", ctx.source.atSpan(span))
-
-      def addWildcardForwardersNamed(name: TermName, span: Span): Unit =
-        List(name, name.toTypeName)
-          .flatMap(path.tpe.memberBasedOnFlags(_, excluded = Private|Given|ConstructorProxy).alternatives)
-          .foreach(addForwarder(name, _, span)) // ignore if any are not added
-
-      def addWildcardForwarders(seen: List[TermName], span: Span): Unit =
-        val nonContextual = mutable.HashSet(seen: _*)
-        val fromCaseClass = path.tpe.widen.classSymbols.exists(_.is(Case))
-        def isCaseClassSynthesized(mbr: Symbol) =
-          fromCaseClass && defn.caseClassSynthesized.contains(mbr)
-        for mbr <- path.tpe.membersBasedOnFlags(required = EmptyFlags, excluded = PrivateOrSynthetic) do
-          if !mbr.symbol.isSuperAccessor
-            // Scala 2 superaccessors have neither Synthetic nor Artfact set, so we
-            // need to filter them out here (by contrast, Scala 3 superaccessors are Artifacts)
-            // Symbols from base traits of case classes that will get synthesized implementations
-            // at PostTyper are also excluded.
-            && !isCaseClassSynthesized(mbr.symbol)
-            && !mbr.symbol.name.is(DefaultGetterName)
-          // default getters are exported with the members they belong to
-          then
-            val alias = mbr.name.toTermName
-            if mbr.symbol.is(Given) then
-              if !seen.contains(alias) && mbr.matchesImportBound(givenBound) then
-                addForwarder(alias, mbr, span)
-              else if !nonContextual.contains(alias) && mbr.matchesImportBound(wildcardBound) then
-                nonContextual += alias
-              addWildcardForwardersNamed(alias, span)
-
-      def addForwarders(sels: List[untpd.ImportSelector], seen: List[TermName]): Unit = sels match
-        case sel :: sels1 =>
-          if sel.isWildcard then
-            addWildcardForwarders(seen, sel.span)
-          else
-            if sel.rename != nme.WILDCARD then
-              addForwardersNamed(sel.name, sel.rename, sel.span)
-            addForwarders(sels1, sel.name :: seen)
-        case _ =>
 
     }
 
@@ -1469,7 +1308,7 @@ class Namer { typer: Typer =>
           val reason = mbrs.map(canForward(_, alias)).collect {
             case CanForward.No(whyNot) => i"\n$path.$name cannot be exported because it $whyNot"
           }.headOption.getOrElse("")
-          report.error(em"""no eligible member $name at $path$reason""", ctx.source.atSpan(span))
+          report.error(i"""no eligible member $name at $path$reason""", ctx.source.atSpan(span))
         else
           targets += alias
 
@@ -1534,7 +1373,7 @@ class Namer { typer: Typer =>
                 case _ => 0
               if cmp == 0 then
                 report.error(
-                  em"""Clashing exports: The exported
+                  ex"""Clashing exports: The exported
                       |     ${forwarder.rhs.symbol}: ${alt1.widen}
                       |and  ${forwarder1.rhs.symbol}: ${alt2.widen}
                       |have the same signature after erasure and overloading resolution could not disambiguate.""",
