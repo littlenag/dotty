@@ -175,7 +175,7 @@ trait QuotesAndSplices {
     val tpt = typedType(tree.tpt)
     assignType(tree, tpt)
 
-  private def checkSpliceOutsideQuote(tree: untpd.Tree)(using Context): Unit =
+  private def checkSpliceOutsideQuote(tree: untpd.Tree, inImportExportMacro: Boolean)(using Context): Unit =
     report.echo(s"checkSpliceOutsideQuote inMacro=$inImportExportMacro show: ${tree.show} ${ctx.owner}\n")
     if (level == 0 && !(ctx.owner.ownersIterator.exists(_.isInlineMethod) || inImportExportMacro || tree.hasAttachment(ImportExportInfo)))
       report.error("Splice ${...} outside quotes '{...} or inline method", tree.srcPos)

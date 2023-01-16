@@ -2661,7 +2661,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
     checkImportSelectors(expr1.tpe, selectors1)
     assignType(cpy.Import(imp)(expr1, selectors1), sym)
 
-    def typedExport(exp: untpd.Export)(using Context): Tree =
+  def typedExport(exp: untpd.Export)(using Context): Tree =
     exp.expr.removeAttachment(TypedAhead) match
       case Some(expr1) =>
         val selectors1 = typedSelectors(exp.selectors)
@@ -2669,7 +2669,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
       case _ =>
         errorTree(exp, em"exports are only allowed from objects and classes, they can not belong to local blocks")
 
-    // TODO MKEGEL
+  // TODO MKEGEL
   def typedExportMacro(exp: untpd.Export)(using Context): Tree =
     val expr1 = exp.expr match {
       case tree: untpd.Splice =>
@@ -2976,7 +2976,6 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
           case untpd.EmptyTree => tpd.EmptyTree
           case tree: untpd.Quote => typedQuote(tree, pt)
           case tree: untpd.Splice => report.echo(s"typedUnnamed Splice ${tree}");  typedSplice(tree, pt)
-          case tree: untpd.TypSplice => typedTypSplice(tree, pt)
           case tree: untpd.MacroTree => report.error("Unexpected macro", tree.srcPos); tpd.nullLiteral  // ill-formed code may reach here
           case tree: untpd.Hole => typedHole(tree, pt)
           case _ => typedUnadapted(desugar(tree, pt), pt, locked)

@@ -2,30 +2,16 @@ package dotty.tools
 package dotc
 package typer
 
-import core.*
-import ast.*
-import Trees.*
-import StdNames.*
-import Scopes.*
-import Denotations.*
-import NamerOps.*
-import ContextOps.*
-import Contexts.*
-import Symbols.*
-import Types.*
-import SymDenotations.*
-import Names.*
-import NameOps.*
-import Flags.*
-import Decorators.*
-import Comments.{*, given}
+import core._
+import ast._
+import Trees._, StdNames._, Scopes._, Denotations._, NamerOps._, ContextOps._
+import Contexts._, Symbols._, Types._, SymDenotations._, Names._, NameOps._, Flags._
+import Decorators._, Comments.{_, given}
 import NameKinds.DefaultGetterName
-import ast.desugar
-import ast.desugar.*
-import ProtoTypes.*
-import util.Spans.*
+import ast.desugar, ast.desugar._
+import ProtoTypes._
+import util.Spans._
 import util.Property
-
 import collection.mutable
 import tpd.tpes
 import Variances.alwaysInvariant
@@ -34,16 +20,15 @@ import config.Printers.typr
 import inlines.{Inliner, Inlines, PrepareInlineable}
 import parsing.JavaParsers.JavaParser
 import parsing.Parsers.Parser
-import Annotations.*
-import Inferencing.*
-import transform.ValueClasses.*
-import transform.TypeUtils.*
-import transform.SymUtils.*
+import Annotations._
+import Inferencing._
+import transform.ValueClasses._
+import transform.TypeUtils._
+import transform.SymUtils._
 import TypeErasure.erasure
-import reporting.*
+import reporting._
 import config.Feature.sourceVersion
-import config.SourceVersion.*
-import dotty.tools.dotc.printing.RefinedPrinter
+import config.SourceVersion._
 
 
 /** This class creates symbols from definitions and imports and gives them
@@ -1103,7 +1088,7 @@ class Namer { typer: Typer =>
       // TODO{mk} symbolOfTree in checkSplice
       // here is where we evaluate our macro call
 
-      val printer = new RefinedPrinter(ctx)
+      val printer = new dotty.tools.dotc.printing.RefinedPrinter(ctx)
 
       // Returns an Inlined
       //val inlined = Inliner.inlineCall(path)
@@ -1308,7 +1293,7 @@ class Namer { typer: Typer =>
           val reason = mbrs.map(canForward(_, alias)).collect {
             case CanForward.No(whyNot) => i"\n$path.$name cannot be exported because it $whyNot"
           }.headOption.getOrElse("")
-          report.error(i"""no eligible member $name at $path$reason""", ctx.source.atSpan(span))
+          report.error(em"""no eligible member $name at $path$reason""", ctx.source.atSpan(span))
         else
           targets += alias
 
@@ -1373,7 +1358,7 @@ class Namer { typer: Typer =>
                 case _ => 0
               if cmp == 0 then
                 report.error(
-                  ex"""Clashing exports: The exported
+                  em"""Clashing exports: The exported
                       |     ${forwarder.rhs.symbol}: ${alt1.widen}
                       |and  ${forwarder1.rhs.symbol}: ${alt2.widen}
                       |have the same signature after erasure and overloading resolution could not disambiguate.""",
@@ -1625,7 +1610,7 @@ class Namer { typer: Typer =>
       )
       typr.println(i"completing $denot, parents = $parents%, %, parentTypes = $parentTypes%, %")
 
-
+      // TODO{mk}
       // Apply modifications by inherited inline traits
       // inspect the body
       // if a macro call try to expand the macro
