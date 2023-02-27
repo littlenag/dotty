@@ -157,7 +157,7 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
   type This = OrderingConstraint
 
   /** A new constraint with given maps and given set of hard typevars */
-  def newConstraint( // !!! Dotty problem: Making newConstraint `private` causes -Ytest-pickler failure.
+  private def newConstraint(
     boundsMap: ParamBounds = this.boundsMap,
     lowerMap: ParamOrdering = this.lowerMap,
     upperMap: ParamOrdering = this.upperMap,
@@ -223,6 +223,17 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
 
   def exclusiveUpper(param: TypeParamRef, butNot: TypeParamRef): List[TypeParamRef] =
     upper(param).filterNot(isLess(butNot, _))
+
+  def bounds(param: TypeParamRef)(using Context): TypeBounds = {
+    val e = entry(param)
+    if (e.exists) e.bounds
+    else {
+      // TODO: should we change the type of paramInfos to nullable?
+      val pinfos: List[param.binder.PInfo] | Null = param.binder.paramInfos
+      if (pinfos != null) pinfos(param.paramNum) // pinfos == null happens in pos/i536.scala
+      else TypeBounds.empty
+    }
+  }
 
 // ---------- Info related to TypeParamRefs -------------------------------------------
 
@@ -360,7 +371,7 @@ class OrderingConstraint(private val boundsMap: ParamBounds,
     def adjustReferenced(bound: Type, isLower: Boolean, add: Boolean) =
       adjuster.variance = if isLower then 1 else -1
       adjuster.add = add
-      adjuster.seen.clear()
+      adjuster.seen.clear(resetToInitial = false)
       adjuster.traverse(bound)
 
     /** Use an optimized strategy to adjust dependencies to account for the delta

@@ -518,8 +518,8 @@ class Definitions {
     def staticsMethod(name: PreName): TermSymbol = ScalaStaticsModule.requiredMethod(name)
 
   @tu lazy val DottyArraysModule: Symbol = requiredModule("scala.runtime.Arrays")
-    def newGenericArrayMethod(using Context): TermSymbol = DottyArraysModule.requiredMethod("newGenericArray")
-    def newArrayMethod(using Context): TermSymbol = DottyArraysModule.requiredMethod("newArray")
+    @tu lazy val newGenericArrayMethod: TermSymbol = DottyArraysModule.requiredMethod("newGenericArray")
+    @tu lazy val newArrayMethod: TermSymbol = DottyArraysModule.requiredMethod("newArray")
 
   def getWrapVarargsArrayModule: Symbol = ScalaRuntimeModule
 
@@ -530,9 +530,12 @@ class Definitions {
   })
 
   @tu lazy val ListClass: Symbol       = requiredClass("scala.collection.immutable.List")
+  def ListType: TypeRef                = ListClass.typeRef
   @tu lazy val ListModule: Symbol      = requiredModule("scala.collection.immutable.List")
   @tu lazy val NilModule: Symbol       = requiredModule("scala.collection.immutable.Nil")
+  def NilType: TermRef                 = NilModule.termRef
   @tu lazy val ConsClass: Symbol       = requiredClass("scala.collection.immutable.::")
+  def ConsType: TypeRef                = ConsClass.typeRef
   @tu lazy val SeqFactoryClass: Symbol = requiredClass("scala.collection.SeqFactory")
 
   @tu lazy val SingletonClass: ClassSymbol =
@@ -814,6 +817,8 @@ class Definitions {
   @tu lazy val ClassTagModule: Symbol = ClassTagClass.companionModule
     @tu lazy val ClassTagModule_apply: Symbol = ClassTagModule.requiredMethod(nme.apply)
 
+  @tu lazy val ReflectSelectableTypeRef: TypeRef = requiredClassRef("scala.reflect.Selectable")
+
   @tu lazy val TypeTestClass: ClassSymbol = requiredClass("scala.reflect.TypeTest")
     @tu lazy val TypeTest_unapply: Symbol = TypeTestClass.requiredMethod(nme.unapply)
   @tu lazy val TypeTestModule_identity: Symbol = TypeTestClass.companionModule.requiredMethod(nme.identity)
@@ -862,7 +867,12 @@ class Definitions {
 
   @tu lazy val QuoteMatchingClass: ClassSymbol = requiredClass("scala.quoted.runtime.QuoteMatching")
     @tu lazy val QuoteMatching_ExprMatch: Symbol = QuoteMatchingClass.requiredMethod("ExprMatch")
+    @tu lazy val QuoteMatching_ExprMatchModule: Symbol = QuoteMatchingClass.requiredClass("ExprMatchModule")
     @tu lazy val QuoteMatching_TypeMatch: Symbol = QuoteMatchingClass.requiredMethod("TypeMatch")
+    @tu lazy val QuoteMatching_TypeMatchModule: Symbol = QuoteMatchingClass.requiredClass("TypeMatchModule")
+  @tu lazy val QuoteMatchingModule: Symbol = requiredModule("scala.quoted.runtime.QuoteMatching")
+    @tu lazy val QuoteMatching_KNil: Symbol = QuoteMatchingModule.requiredType("KNil")
+    @tu lazy val QuoteMatching_KCons: Symbol = QuoteMatchingModule.requiredType("KCons")
 
   @tu lazy val ToExprModule: Symbol = requiredModule("scala.quoted.ToExpr")
     @tu lazy val ToExprModule_BooleanToExpr: Symbol = ToExprModule.requiredMethod("BooleanToExpr")
@@ -968,6 +978,10 @@ class Definitions {
   def TupledFunctionClass(using Context): ClassSymbol = TupledFunctionTypeRef.symbol.asClass
   def RuntimeTupleFunctionsModule(using Context): Symbol = requiredModule("scala.runtime.TupledFunctions")
 
+  @tu lazy val boundaryModule: Symbol = requiredModule("scala.util.boundary")
+  @tu lazy val LabelClass: Symbol = requiredClass("scala.util.boundary.Label")
+  @tu lazy val BreakClass: Symbol = requiredClass("scala.util.boundary.Break")
+
   @tu lazy val CapsModule: Symbol = requiredModule("scala.caps")
     @tu lazy val captureRoot: TermSymbol = CapsModule.requiredValue("*")
     @tu lazy val CapsUnsafeModule: Symbol = requiredModule("scala.caps.unsafe")
@@ -1001,6 +1015,7 @@ class Definitions {
   @tu lazy val MappedAlternativeAnnot: ClassSymbol = requiredClass("scala.annotation.internal.MappedAlternative")
   @tu lazy val MigrationAnnot: ClassSymbol = requiredClass("scala.annotation.migration")
   @tu lazy val NowarnAnnot: ClassSymbol = requiredClass("scala.annotation.nowarn")
+  @tu lazy val UnusedAnnot: ClassSymbol = requiredClass("scala.annotation.unused")
   @tu lazy val TransparentTraitAnnot: ClassSymbol = requiredClass("scala.annotation.transparentTrait")
   @tu lazy val NativeAnnot: ClassSymbol = requiredClass("scala.native")
   @tu lazy val RepeatedAnnot: ClassSymbol = requiredClass("scala.annotation.internal.Repeated")
@@ -1412,8 +1427,8 @@ class Definitions {
         val classRefs1 = new Array[TypeRef | Null](classRefs.length * 2)
         Array.copy(classRefs, 0, classRefs1, 0, classRefs.length)
         classRefs = classRefs1
-      val funName = s"scala.$prefix$n"
       if classRefs(n) == null then
+        val funName = s"scala.$prefix$n"
         classRefs(n) =
           if prefix.startsWith("Impure")
           then staticRef(funName.toTypeName).symbol.typeRef
@@ -1667,6 +1682,15 @@ class Definitions {
     }
     rec(tp.stripTypeVar, Nil, bound)
   }
+
+  def isSmallGenericTuple(tp: Type)(using Context): Boolean =
+    if tp.derivesFrom(defn.PairClass) && !defn.isTupleNType(tp.widenDealias) then
+      // If this is a generic tuple we need to cast it to make the TupleN/ members accessible.
+      // This works only for generic tuples of known size up to 22.
+      defn.tupleTypes(tp.widenTermRefExpr) match
+        case Some(elems) if elems.length <= Definitions.MaxTupleArity => true
+        case _ => false
+    else false
 
   def isProductSubType(tp: Type)(using Context): Boolean = tp.derivesFrom(ProductClass)
 

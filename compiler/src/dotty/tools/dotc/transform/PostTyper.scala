@@ -269,7 +269,7 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisPhase
         case CaseDef(pat, _, _) =>
           val gadtCtx =
            pat.removeAttachment(typer.Typer.InferredGadtConstraints) match
-             case Some(gadt) => ctx.fresh.setGadt(gadt)
+             case Some(gadt) => ctx.fresh.setGadtState(GadtState(gadt))
              case None =>
                ctx
           super.transform(tree)(using gadtCtx)
@@ -325,7 +325,7 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisPhase
                 // Check the constructor type as well; it could be an illegal singleton type
                 // which would not be reflected as `tree.tpe`
                 ctx.typer.checkClassType(nu.tpe, tree.srcPos, traitReq = false, stablePrefixReq = false)
-              Checking.checkInstantiable(tree.tpe, nu.srcPos)
+              Checking.checkInstantiable(tree.tpe, nu.tpe, nu.srcPos)
               withNoCheckNews(nu :: Nil)(app1)
             case _ =>
               app1
@@ -390,6 +390,14 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisPhase
               case impl: Template =>
                 for parent <- impl.parents do
                   Checking.checkTraitInheritance(parent.tpe.classSymbol, sym.asClass, parent.srcPos)
+                  // Constructor parameters are in scope when typing a parent.
+                  // While they can safely appear in a parent tree, to preserve
+                  // soundness we need to ensure they don't appear in a parent
+                  // type (#16270).
+                  val illegalRefs = parent.tpe.namedPartsWith(p => p.symbol.is(ParamAccessor) && (p.symbol.owner eq sym))
+                  if illegalRefs.nonEmpty then
+                    report.error(
+                      em"The type of a class parent cannot refer to constructor parameters, but ${parent.tpe} refers to ${illegalRefs.map(_.name.show).mkString(",")}", parent.srcPos)
             // Add SourceFile annotation to top-level classes
             if sym.owner.is(Package) then
               if ctx.compilationUnit.source.exists && sym != defn.SourceFileAnnot then
@@ -413,7 +421,7 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisPhase
             Checking.checkGoodBounds(tree.symbol)
           super.transform(tree)
         case tree: New if isCheckable(tree) =>
-          Checking.checkInstantiable(tree.tpe, tree.srcPos)
+          Checking.checkInstantiable(tree.tpe, tree.tpe, tree.srcPos)
           super.transform(tree)
         case tree: Closure if !tree.tpt.isEmpty =>
           Checking.checkRealizable(tree.tpt.tpe, tree.srcPos, "SAM type")
@@ -432,6 +440,13 @@ class PostTyper extends MacroTransform with IdentityDenotTransformer { thisPhase
           super.transform(tree)
         case SingletonTypeTree(ref) =>
           Checking.checkRealizable(ref.tpe, ref.srcPos)
+          super.transform(tree)
+        case tree: TypeBoundsTree =>
+          val TypeBoundsTree(lo, hi, alias) = tree
+          if !alias.isEmpty then
+            val bounds = TypeBounds(lo.tpe, hi.tpe)
+            if !bounds.contains(alias.tpe) then
+              report.error(em"type ${alias.tpe} outside bounds $bounds", tree.srcPos)
           super.transform(tree)
         case tree: TypeTree =>
           tree.withType(

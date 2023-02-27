@@ -45,28 +45,25 @@ object LazyVals {
 
   /* ------------- Start of public API ------------- */
 
-  @experimental
-  sealed trait LazyValControlState
+  // This trait extends Serializable to fix #16806 that caused a race condition
+  sealed trait LazyValControlState extends Serializable
 
   /**
    * Used to indicate the state of a lazy val that is being
    * evaluated and of which other threads await the result.
    */
-  @experimental
   final class Waiting extends CountDownLatch(1) with LazyValControlState
 
   /**
    * Used to indicate the state of a lazy val that is currently being
    * evaluated with no other thread awaiting its result.
    */
-  @experimental
   object Evaluating extends LazyValControlState
 
   /**
    * Used to indicate the state of a lazy val that has been evaluated to
    * `null`.
    */
-  @experimental
   object NullValue extends LazyValControlState
 
   final val BITS_PER_LAZY_VAL = 2L
@@ -86,7 +83,6 @@ object LazyVals {
     unsafe.compareAndSwapLong(t, offset, e, n)
   }
 
-  @experimental
   def objCAS(t: Object, offset: Long, exp: Object, n: Object): Boolean = {
     if (debug)
       println(s"objCAS($t, $exp, $n)")
@@ -147,7 +143,6 @@ object LazyVals {
     r
   }
 
-  @experimental
   def getStaticFieldOffset(field: java.lang.reflect.Field): Long = {
     @nowarn
     val r = unsafe.staticFieldOffset(field)

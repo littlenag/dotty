@@ -245,7 +245,7 @@ extends NotFoundMsg(MissingIdentID) {
   }
 }
 
-class TypeMismatch(found: Type,  expected: Type, inTree: Option[untpd.Tree],  addenda: => String*)(using Context)
+class TypeMismatch(found: Type, expected: Type, inTree: Option[untpd.Tree], addenda: => String*)(using Context)
   extends TypeMismatchMsg(found, expected)(TypeMismatchID):
 
   def msg(using Context) =
@@ -1328,21 +1328,32 @@ class AmbiguousReference(name: Name, newPrec: BindingPrec, prevPrec: BindingPrec
   }
 
   def msg(using Context) =
-    i"""|Reference to $name is ambiguous,
-        |it is both ${bindingString(newPrec, ctx)}
+    i"""|Reference to $name is ambiguous.
+        |It is both ${bindingString(newPrec, ctx)}
         |and ${bindingString(prevPrec, prevCtx, " subsequently")}"""
 
   def explain(using Context) =
-    i"""|The compiler can't decide which of the possible choices you
-        |are referencing with $name: A definition of lower precedence
-        |in an inner scope, or a definition with higher precedence in
-        |an outer scope.
+    val precedent =
+      if newPrec == prevPrec then                 """two name bindings of equal precedence
+        |were introduced in the same scope.""".stripMargin
+      else                                        """a name binding of lower precedence
+        |in an inner scope cannot shadow a binding with higher precedence in
+        |an outer scope.""".stripMargin
+
+    i"""|The identifier $name is ambiguous because $precedent
+        |
+        |The precedence of the different kinds of name bindings, from highest to lowest, is:
+        | - Definitions in an enclosing scope
+        | - Inherited definitions and top-level definitions in packages
+        | - Names introduced by import of a specific name
+        | - Names introduced by wildcard import
+        | - Definitions from packages in other files
         |Note:
-        | - Definitions in an enclosing scope take precedence over inherited definitions
-        | - Definitions take precedence over imports
-        | - Named imports take precedence over wildcard imports
-        | - You may replace a name when imported using
-        |   ${hl("import")} scala.{ $name => ${name.show + "Tick"} }
+        | - As a rule, definitions take precedence over imports.
+        | - Definitions in an enclosing scope take precedence over inherited definitions,
+        |   which can result in ambiguities in nested classes.
+        | - When importing, you can avoid naming conflicts by renaming:
+        |   ${hl("import")} scala.{$name => ${name.show}Tick}
         |"""
 }
 
@@ -2556,7 +2567,8 @@ class MissingImplicitArgument(
     pt: Type,
     where: String,
     paramSymWithMethodCallTree: Option[(Symbol, tpd.Tree)] = None,
-    ignoredInstanceNormalImport: => Option[SearchSuccess]
+    ignoredInstanceNormalImport: => Option[SearchSuccess],
+    ignoredConvertibleImplicits: => Iterable[TermRef]
   )(using Context) extends TypeMsg(MissingImplicitArgumentID), ShowMatchTrace(pt):
 
   arg.tpe match
@@ -2745,8 +2757,18 @@ class MissingImplicitArgument(
         // show all available additional info
         def hiddenImplicitNote(s: SearchSuccess) =
           i"\n\nNote: ${s.ref.symbol.showLocated} was not considered because it was not imported with `import given`."
+        def showImplicitAndConversions(imp: TermRef, convs: Iterable[TermRef]) =
+          i"\n- ${imp.symbol.showDcl}${convs.map(c => "\n    - " + c.symbol.showDcl).mkString}"
+        def noChainConversionsNote(ignoredConvertibleImplicits: Iterable[TermRef]): Option[String] =
+          Option.when(ignoredConvertibleImplicits.nonEmpty)(
+            i"\n\nNote: implicit conversions are not automatically applied to arguments of using clauses. " +
+            i"You will have to pass the argument explicitly.\n" +
+            i"The following implicits in scope can be implicitly converted to ${pt.show}:" +
+            ignoredConvertibleImplicits.map { imp => s"\n- ${imp.symbol.showDcl}"}.mkString
+          )
         super.msgPostscript
         ++ ignoredInstanceNormalImport.map(hiddenImplicitNote)
+            .orElse(noChainConversionsNote(ignoredConvertibleImplicits))
             .getOrElse(ctx.typer.importSuggestionAddendum(pt))
 
   def explain(using Context) = ""
@@ -2792,3 +2814,14 @@ extends SyntaxMsg(InlineGivenShouldNotBeFunctionID):
        |      inline def apply(x: A) = x.toB
      """
 
+class ValueDiscarding(tp: Type)(using Context)
+  extends Message(ValueDiscardingID):
+    def kind = MessageKind.PotentialIssue
+    def msg(using Context) = i"discarded non-Unit value of type $tp"
+    def explain(using Context) = ""
+
+class UnusedNonUnitValue(tp: Type)(using Context)
+  extends Message(UnusedNonUnitValueID):
+    def kind = MessageKind.PotentialIssue
+    def msg(using Context) = i"unused value of type $tp"
+    def explain(using Context) = ""

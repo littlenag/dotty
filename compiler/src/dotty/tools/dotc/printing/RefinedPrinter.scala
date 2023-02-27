@@ -3,6 +3,7 @@ package dotc
 package printing
 
 import core._
+import Constants.*
 import Texts._
 import Types._
 import Flags._
@@ -286,14 +287,10 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
       case tp: ViewProto =>
         toText(tp.argType) ~ " ?=>? " ~ toText(tp.resultType)
       case tp @ FunProto(args, resultType) =>
-        val argsText = args match {
-          case dummyTreeOfType(tp) :: Nil if !(tp isRef defn.NullClass) => "null: " ~ toText(tp)
-          case _ => toTextGlobal(args, ", ")
-        }
         "[applied to ("
         ~ keywordText("using ").provided(tp.isContextualMethod)
         ~ keywordText("erased ").provided(tp.isErasedMethod)
-        ~ argsText
+        ~ argsTreeText(args)
         ~ ") returning "
         ~ toText(resultType)
         ~ "]"
@@ -308,6 +305,10 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
 
   protected def exprToText(tp: ExprType): Text =
     "=> " ~ toText(tp.resType)
+
+  protected def argsTreeText(args: List[untpd.Tree]): Text = args match
+    case dummyTreeOfType(tp) :: Nil if !tp.isRef(defn.NullClass) && !homogenizedView => toText(Constant(null)) ~ ": " ~ toText(tp)
+    case _                                                                           => toTextGlobal(args, ", ")
 
   protected def blockToText[T <: Untyped](block: Block[T]): Text =
     blockText(block.stats :+ block.expr)
@@ -442,7 +443,7 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
           toTextLocal(fun)
           ~ "("
           ~ Str("using ").provided(app.applyKind == ApplyKind.Using && !homogenizedView)
-          ~ toTextGlobal(args, ", ")
+          ~ argsTreeText(args)
           ~ ")"
       case tree: TypeApply =>
         typeApplyText(tree)
@@ -570,7 +571,7 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
         if (lo eq hi) && alias.isEmpty then optText(lo)(" = " ~ _)
         else optText(lo)(" >: " ~ _) ~ optText(hi)(" <: " ~ _) ~ optText(alias)(" = " ~ _)
       case bind @ Bind(name, body) =>
-        keywordText("given ").provided(tree.symbol.isOneOf(GivenOrImplicit) && !homogenizedView) ~ // Used for scala.quoted.Type in quote patterns (not pickled)
+        toTextOwner(bind) ~ keywordText("given ").provided(tree.symbol.isOneOf(GivenOrImplicit) && !homogenizedView) ~ // Used for scala.quoted.Type in quote patterns (not pickled)
         changePrec(InfixPrec) { nameIdText(bind) ~ " @ " ~ toText(body) }
       case Alternative(trees) =>
         changePrec(OrPrec) { toText(trees, " | ") }
@@ -895,30 +896,31 @@ class RefinedPrinter(_ctx: Context) extends PlainPrinter(_ctx) {
           if isExtension then
             val paramss =
               if tree.name.isRightAssocOperatorName then
+                // If you change the names of the clauses below, also change them in right-associative-extension-methods.md
                 // we have the following encoding of tree.paramss:
-                //   (leadingTyParamss ++ leadingUsing
-                //      ++ rightTyParamss ++ rightParamss
-                //      ++ leftParamss ++ trailingUsing ++ rest)
+                //   (leftTyParams ++ leadingUsing
+                //      ++ rightTyParams ++ rightParam
+                //      ++ leftParam ++ trailingUsing ++ rest)
                 //   e.g.
                 //     extension [A](using B)(c: C)(using D)
                 //       def %:[E](f: F)(g: G)(using H): Res = ???
                 //   will have the following values:
-                //   - leadingTyParamss = List(`[A]`)
+                //   - leftTyParams = List(`[A]`)
                 //   - leadingUsing = List(`(using B)`)
-                //   - rightTyParamss = List(`[E]`)
-                //   - rightParamss = List(`(f: F)`)
-                //   - leftParamss = List(`(c: C)`)
+                //   - rightTyParams = List(`[E]`)
+                //   - rightParam = List(`(f: F)`)
+                //   - leftParam = List(`(c: C)`)
                 //   - trailingUsing = List(`(using D)`)
                 //   - rest = List(`(g: G)`, `(using H)`)
-                // we need to swap (rightTyParams ++ rightParamss) with (leftParamss ++ trailingUsing)
-                val (leadingTyParamss, rest1) = tree.paramss.span(isTypeParamClause)
+                // we need to swap (rightTyParams ++ rightParam) with (leftParam ++ trailingUsing)
+                val (leftTyParams, rest1) = tree.paramss.span(isTypeParamClause)
                 val (leadingUsing, rest2) = rest1.span(isUsingClause)
-                val (rightTyParamss, rest3) = rest2.span(isTypeParamClause)
-                val (rightParamss, rest4) = rest3.splitAt(1)
-                val (leftParamss, rest5) = rest4.splitAt(1)
+                val (rightTyParams, rest3) = rest2.span(isTypeParamClause)
+                val (rightParam, rest4) = rest3.splitAt(1)
+                val (leftParam, rest5) = rest4.splitAt(1)
                 val (trailingUsing, rest6) = rest5.span(isUsingClause)
-                if leftParamss.nonEmpty then
-                  leadingTyParamss ::: leadingUsing ::: leftParamss ::: trailingUsing ::: rightTyParamss ::: rightParamss ::: rest6
+                if leftParam.nonEmpty then
+                  leftTyParams ::: leadingUsing ::: leftParam ::: trailingUsing ::: rightTyParams ::: rightParam ::: rest6
                 else
                   tree.paramss // it wasn't a binary operator, after all.
               else

@@ -31,6 +31,7 @@ import Feature.migrateTo3
 import config.Printers.{implicits, implicitsDetailed}
 import collection.mutable
 import reporting._
+import transform.Splicer
 import annotation.tailrec
 
 import scala.annotation.internal.sharable
@@ -567,6 +568,12 @@ object Implicits:
 
     def msg(using Context) = em"Failed to synthesize an instance of type ${clarify(expectedType)}:${formatReasons}"
 
+  class MacroErrorsFailure(errors: List[Diagnostic.Error],
+                           val expectedType: Type,
+                           val argument: Tree) extends SearchFailureType {
+    def msg(using Context): Message =
+      em"${errors.map(_.msg).mkString("\n")}"
+  }
 end Implicits
 
 import Implicits._
@@ -630,7 +637,7 @@ trait ImplicitRunInfo:
 
       def apply(tp: Type): collection.Set[Type] =
         parts = mutable.LinkedHashSet()
-        partSeen.clear()
+        partSeen.clear(resetToInitial = false)
         traverse(tp)
         parts
     end collectParts
@@ -923,7 +930,34 @@ trait Implicits:
           // example where searching for a nested type causes an infinite loop.
           None
 
-    MissingImplicitArgument(arg, pt, where, paramSymWithMethodCallTree, ignoredInstanceNormalImport)
+    def allImplicits(currImplicits: ContextualImplicits): List[ImplicitRef] =
+      if currImplicits.outerImplicits == null then currImplicits.refs
+      else currImplicits.refs ::: allImplicits(currImplicits.outerImplicits)
+
+    /** Whether the given type is for an implicit def that's a Scala 2 implicit conversion */
+    def isImplicitDefConversion(typ: Type): Boolean = typ match {
+      case PolyType(_, resType) => isImplicitDefConversion(resType)
+      case mt: MethodType => !mt.isImplicitMethod && !mt.isContextualMethod
+      case _ => false
+    }
+
+    def ignoredConvertibleImplicits = arg.tpe match
+      case fail: SearchFailureType =>
+        if (fail.expectedType eq pt) || isFullyDefined(fail.expectedType, ForceDegree.none) then
+          // Get every implicit in scope and try to convert each
+          allImplicits(ctx.implicits)
+            .view
+            .map(_.underlyingRef)
+            .distinctBy(_.denot)
+            .filter { imp =>
+              !isImplicitDefConversion(imp.underlying)
+                && imp.symbol != defn.Predef_conforms
+                && viewExists(imp, fail.expectedType)
+            }
+        else
+          Nil
+
+    MissingImplicitArgument(arg, pt, where, paramSymWithMethodCallTree, ignoredInstanceNormalImport, ignoredConvertibleImplicits)
   }
 
   /** A string indicating the formal parameter corresponding to a  missing argument */
@@ -1002,11 +1036,10 @@ trait Implicits:
         if (argument.isEmpty) i"missing implicit parameter of type $pt after typer at phase ${ctx.phase.phaseName}"
         else i"type error: ${argument.tpe} does not conform to $pt${err.whyNoMatchStr(argument.tpe, pt)}")
 
-      if pt.unusableForInference
-         || !argument.isEmpty && argument.tpe.unusableForInference
-      then return NoMatchingImplicitsFailure
+      val usableForInference = !pt.unusableForInference
+        && (argument.isEmpty || !argument.tpe.unusableForInference)
 
-      val result0 =
+      val result0 = if usableForInference then
         // If we are searching implicits when resolving an import symbol, start the search
         // in the first enclosing context that does not have the same scope and owner as the current
         // context. Without that precaution, an eligible implicit in the current scope
@@ -1023,7 +1056,7 @@ trait Implicits:
         catch case ce: CyclicReference =>
           ce.inImplicitSearch = true
           throw ce
-      end result0
+      else NoMatchingImplicitsFailure
 
       val result =
         result0 match {
@@ -1031,7 +1064,7 @@ trait Implicits:
             if result.tstate ne ctx.typerState then
               result.tstate.commit()
             if result.gstate ne ctx.gadt then
-              ctx.gadt.restore(result.gstate)
+              ctx.gadtState.restore(result.gstate)
             if hasSkolem(false, result.tree) then
               report.error(SkolemInInferred(result.tree, pt, argument), ctx.source.atSpan(span))
             implicits.println(i"success: $result")
@@ -1052,7 +1085,7 @@ trait Implicits:
                   result
               }
             else result
-          case NoMatchingImplicitsFailure =>
+          case NoMatchingImplicitsFailure if usableForInference =>
             SearchFailure(new NoMatchingImplicits(pt, argument, ctx.typerState.constraint), span)
           case _ =>
             result0
@@ -1131,19 +1164,22 @@ trait Implicits:
       if ctx.reporter.hasErrors
          || !cand.ref.symbol.isAccessibleFrom(cand.ref.prefix)
       then
-        ctx.reporter.removeBufferedMessages
-        adapted.tpe match {
+        val res = adapted.tpe match {
           case _: SearchFailureType => SearchFailure(adapted)
           case error: PreviousErrorType if !adapted.symbol.isAccessibleFrom(cand.ref.prefix) =>
             SearchFailure(adapted.withType(new NestedFailure(error.msg, pt)))
-          case _ =>
+          case tpe =>
             // Special case for `$conforms` and `<:<.refl`. Showing them to the users brings
             // no value, so we instead report a `NoMatchingImplicitsFailure`
             if (adapted.symbol == defn.Predef_conforms || adapted.symbol == defn.SubType_refl)
               NoMatchingImplicitsFailure
+            else if Splicer.inMacroExpansion && tpe <:< pt then
+              SearchFailure(adapted.withType(new MacroErrorsFailure(ctx.reporter.allErrors.reverse, pt, argument)))
             else
               SearchFailure(adapted.withType(new MismatchedImplicit(ref, pt, argument)))
         }
+        ctx.reporter.removeBufferedMessages
+        res
       else
         SearchSuccess(adapted, ref, cand.level, cand.isExtension)(ctx.typerState, ctx.gadt)
     }

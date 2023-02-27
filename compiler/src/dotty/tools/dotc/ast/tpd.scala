@@ -47,11 +47,17 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
       Apply(expr, args)
     case _: RefTree | _: GenericApply | _: Inlined | _: Hole =>
       ta.assignType(untpd.Apply(fn, args), fn, args)
+    case _ =>
+      assert(ctx.reporter.errorsReported)
+      ta.assignType(untpd.Apply(fn, args), fn, args)
 
   def TypeApply(fn: Tree, args: List[Tree])(using Context): TypeApply = fn match
     case Block(Nil, expr) =>
       TypeApply(expr, args)
     case _: RefTree | _: GenericApply =>
+      ta.assignType(untpd.TypeApply(fn, args), fn, args)
+    case _ =>
+      assert(ctx.reporter.errorsReported)
       ta.assignType(untpd.TypeApply(fn, args), fn, args)
 
   def Literal(const: Constant)(using Context): Literal =
@@ -413,6 +419,10 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
     case tp: TermRef => !prefixIsElidable(tp)
     case _ => false
   }
+
+  def needsIdent(tp: Type)(using Context): Boolean = tp match
+    case tp: TermRef => tp.prefix eq NoPrefix
+    case _ => false
 
   /** A tree representing the same reference as the given type */
   def ref(tp: NamedType, needLoad: Boolean = true)(using Context): Tree =
@@ -857,7 +867,7 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
     }
 
     /** After phase `trans`, set the owner of every definition in this tree that was formerly
-     *  owner by `from` to `to`.
+     *  owned by `from` to `to`.
      */
     def changeOwnerAfter(from: Symbol, to: Symbol, trans: DenotTransformer)(using Context): ThisTree =
       if (ctx.phase == trans.next) {
@@ -1144,35 +1154,38 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
       expand(tree, tree.tpe.widen)
   }
 
-  inline val MapRecursionLimit = 10
-
   extension (trees: List[Tree])
 
-    /** A map that expands to a recursive function. It's equivalent to
+    /** Equivalent (but faster) to
      *
      *    flatten(trees.mapConserve(op))
      *
-     *  and falls back to it after `MaxRecursionLimit` recursions.
-     *  Before that it uses a simpler method that uses stackspace
-     *  instead of heap.
-     *  Note `op` is duplicated in the generated code, so it should be
-     *  kept small.
+     *  assuming that `trees` does not contain `Thicket`s to start with.
      */
-    inline def mapInline(inline op: Tree => Tree): List[Tree] =
-      def recur(trees: List[Tree], count: Int): List[Tree] =
-        if count > MapRecursionLimit then
-          // use a slower implementation that avoids stack overflows
-          flatten(trees.mapConserve(op))
-        else trees match
-          case tree :: rest =>
-            val tree1 = op(tree)
-            val rest1 = recur(rest, count + 1)
-            if (tree1 eq tree) && (rest1 eq rest) then trees
-            else tree1 match
-              case Thicket(elems1) => elems1 ::: rest1
-              case _ => tree1 :: rest1
-          case nil => nil
-      recur(trees, 0)
+    inline def flattenedMapConserve(inline f: Tree => Tree): List[Tree] =
+      @tailrec
+      def loop(mapped: ListBuffer[Tree] | Null, unchanged: List[Tree], pending: List[Tree]): List[Tree] =
+        if pending.isEmpty then
+          if mapped == null then unchanged
+          else mapped.prependToList(unchanged)
+        else
+          val head0 = pending.head
+          val head1 = f(head0)
+
+          if head1 eq head0 then
+            loop(mapped, unchanged, pending.tail)
+          else
+            val buf = if mapped == null then new ListBuffer[Tree] else mapped
+            var xc = unchanged
+            while xc ne pending do
+              buf += xc.head
+              xc = xc.tail
+            head1 match
+              case Thicket(elems1) => buf ++= elems1
+              case _ => buf += head1
+            val tail0 = pending.tail
+            loop(buf, tail0, tail0)
+      loop(null, trees, trees)
 
     /** Transform statements while maintaining import contexts and expression contexts
      *  in the same way as Typer does. The code addresses additional concerns:
@@ -1500,7 +1513,7 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
     }
   }
 
-  /** Creates the tuple type tree repesentation of the type trees in `ts` */
+  /** Creates the tuple type tree representation of the type trees in `ts` */
   def tupleTypeTree(elems: List[Tree])(using Context): Tree = {
     val arity = elems.length
     if arity <= Definitions.MaxTupleArity then
@@ -1511,9 +1524,13 @@ object tpd extends Trees.Instance[Type] with TypedTreeInfo {
     else nestedPairsTypeTree(elems)
   }
 
-  /** Creates the nested pairs type tree repesentation of the type trees in `ts` */
+  /** Creates the nested pairs type tree representation of the type trees in `ts` */
   def nestedPairsTypeTree(ts: List[Tree])(using Context): Tree =
     ts.foldRight[Tree](TypeTree(defn.EmptyTupleModule.termRef))((x, acc) => AppliedTypeTree(TypeTree(defn.PairClass.typeRef), x :: acc :: Nil))
+
+  /** Creates the nested higher-kinded pairs type tree representation of the type trees in `ts` */
+  def hkNestedPairsTypeTree(ts: List[Tree])(using Context): Tree =
+    ts.foldRight[Tree](TypeTree(defn.QuoteMatching_KNil.typeRef))((x, acc) => AppliedTypeTree(TypeTree(defn.QuoteMatching_KCons.typeRef), x :: acc :: Nil))
 
   /** Replaces all positions in `tree` with zero-extent positions */
   private def focusPositions(tree: Tree)(using Context): Tree = {

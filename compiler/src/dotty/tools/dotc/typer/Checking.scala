@@ -33,7 +33,7 @@ import NameOps._
 import SymDenotations.{NoCompleter, NoDenotation}
 import Applications.unapplyArgs
 import Inferencing.isFullyDefined
-import transform.patmat.SpaceEngine.isIrrefutable
+import transform.patmat.SpaceEngine.{isIrrefutable, isIrrefutableQuotedPattern}
 import config.Feature
 import config.Feature.sourceVersion
 import config.SourceVersion._
@@ -185,12 +185,14 @@ object Checking {
   /** Check that `tp` refers to a nonAbstract class
    *  and that the instance conforms to the self type of the created class.
    */
-  def checkInstantiable(tp: Type, pos: SrcPos)(using Context): Unit =
+  def checkInstantiable(tp: Type, srcTp: Type, pos: SrcPos)(using Context): Unit =
     tp.underlyingClassRef(refinementOK = false) match
       case tref: TypeRef =>
         val cls = tref.symbol
-        if (cls.isOneOf(AbstractOrTrait))
-          report.error(CantInstantiateAbstractClassOrTrait(cls, isTrait = cls.is(Trait)), pos)
+        if (cls.isOneOf(AbstractOrTrait)) {
+          val srcCls = srcTp.underlyingClassRef(refinementOK = false).typeSymbol
+          report.error(CantInstantiateAbstractClassOrTrait(srcCls, isTrait = srcCls.is(Trait)), pos)
+        }
         if !cls.is(Module) then
           // Create a synthetic singleton type instance, and check whether
           // it conforms to the self type of the class as seen from that instance.
@@ -809,7 +811,7 @@ trait Checking {
 
   /** Check that type `tp` is stable. */
   def checkStable(tp: Type, pos: SrcPos, kind: String)(using Context): Unit =
-    if !tp.isStable then report.error(NotAPath(tp, kind), pos)
+    if !tp.isStable && !tp.isErroneous then report.error(NotAPath(tp, kind), pos)
 
   /** Check that all type members of `tp` have realizable bounds */
   def checkRealizableBounds(cls: Symbol, pos: SrcPos)(using Context): Unit = {
@@ -845,6 +847,10 @@ trait Checking {
               case _ => EmptyTree
           if extractor.isEmpty then
             em"pattern binding uses refutable extractor"
+          else if extractor.symbol eq defn.QuoteMatching_ExprMatch then
+            em"pattern binding uses refutable extractor `'{...}`"
+          else if extractor.symbol eq defn.QuoteMatching_TypeMatch then
+            em"pattern binding uses refutable extractor `'[...]`"
           else
             em"pattern binding uses refutable extractor `$extractor`"
 
@@ -883,9 +889,9 @@ trait Checking {
         pat match
           case Bind(_, pat1) =>
             recur(pat1, pt)
-          case UnApply(fn, _, pats) =>
+          case UnApply(fn, implicits, pats) =>
             check(pat, pt) &&
-            (isIrrefutable(fn, pats.length) || fail(pat, pt, Reason.RefutableExtractor)) && {
+            (isIrrefutable(fn, pats.length) || isIrrefutableQuotedPattern(fn, implicits, pt) || fail(pat, pt, Reason.RefutableExtractor)) && {
               val argPts = unapplyArgs(fn.tpe.widen.finalResultType, fn, pats, pat.srcPos)
               pats.corresponds(argPts)(recur)
             }
@@ -905,7 +911,7 @@ trait Checking {
   private def checkLegalImportOrExportPath(path: Tree, kind: String)(using Context): Unit = {
     checkStable(path.tpe, path.srcPos, kind)
     if (!ctx.isAfterTyper) Checking.checkRealizable(path.tpe, path.srcPos)
-    if !isIdempotentExpr(path) then
+    if !isIdempotentExpr(path) && !path.tpe.isErroneous then
       report.error(em"import prefix is not a pure expression", path.srcPos)
   }
 
@@ -1389,9 +1395,9 @@ trait Checking {
 
       if (stat.symbol.isAllOf(EnumCase))
         stat match {
-          case TypeDef(_, Template(DefDef(_, paramss, _, _), parents, _, _)) =>
+          case TypeDef(_, impl @ Template(DefDef(_, paramss, _, _), _, _, _)) =>
             paramss.foreach(_.foreach(check))
-            parents.foreach(check)
+            impl.parents.foreach(check)
           case vdef: ValDef =>
             vdef.rhs match {
               case Block((clsDef @ TypeDef(_, impl: Template)) :: Nil, _)
@@ -1456,7 +1462,6 @@ trait Checking {
 
   def checkMatchable(tp: Type, pos: SrcPos, pattern: Boolean)(using Context): Unit =
     if !tp.derivesFrom(defn.MatchableClass) && sourceVersion.isAtLeast(`future-migration`) then
-      val kind = if pattern then "pattern selector" else "value"
       report.warning(MatchableWarning(tp, pattern), pos)
 
   /** Check that there is an implicit capability to throw a checked exception

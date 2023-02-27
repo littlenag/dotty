@@ -142,7 +142,8 @@ object Contexts {
     def tree: Tree[?]
     def scope: Scope
     def typerState: TyperState
-    def gadt: GadtConstraint
+    def gadt: GadtConstraint = gadtState.gadt
+    def gadtState: GadtState
     def searchHistory: SearchHistory
     def source: SourceFile
 
@@ -420,7 +421,7 @@ object Contexts {
       val constrCtx = outersIterator.dropWhile(_.outer.owner == owner).next()
       superOrThisCallContext(owner, constrCtx.scope)
         .setTyperState(typerState)
-        .setGadt(gadt)
+        .setGadtState(gadtState)
         .fresh
         .setScope(this.scope)
     }
@@ -467,7 +468,6 @@ object Contexts {
 
     /** A fresh clone of this context embedded in the specified `outer` context. */
     def freshOver(outer: Context): FreshContext =
-      util.Stats.record("Context.fresh")
       FreshContext(base).init(outer, this).setTyperState(this.typerState)
 
     final def withOwner(owner: Symbol): Context =
@@ -517,7 +517,9 @@ object Contexts {
       implicitsCache = null
       related = null
 
-    /** Reuse this context as a fresh context nested inside `outer` */
+    /** Reuse this context as a fresh context nested inside `outer`
+     *  But keep the typerstate, this one has to be set explicitly if needed.
+     */
     def reuseIn(outer: Context): this.type
   }
 
@@ -533,6 +535,7 @@ object Contexts {
    *  of its attributes using the with... methods.
    */
   class FreshContext(base: ContextBase) extends Context(base) {
+    util.Stats.record("Context.fresh")
 
     private var _outer: Context = uninitialized
     def outer: Context = _outer
@@ -555,8 +558,8 @@ object Contexts {
     private var _typerState: TyperState = uninitialized
     final def typerState: TyperState = _typerState
 
-    private var _gadt: GadtConstraint = uninitialized
-    final def gadt: GadtConstraint = _gadt
+    private var _gadtState: GadtState = uninitialized
+    final def gadtState: GadtState = _gadtState
 
     private var _searchHistory: SearchHistory = uninitialized
     final def searchHistory: SearchHistory = _searchHistory
@@ -581,7 +584,7 @@ object Contexts {
       _owner = origin.owner
       _tree = origin.tree
       _scope = origin.scope
-      _gadt = origin.gadt
+      _gadtState = origin.gadtState
       _searchHistory = origin.searchHistory
       _source = origin.source
       _moreProperties = origin.moreProperties
@@ -595,7 +598,7 @@ object Contexts {
 
     def setPeriod(period: Period): this.type =
       util.Stats.record("Context.setPeriod")
-      assert(period.firstPhaseId == period.lastPhaseId, period)
+      //assert(period.firstPhaseId == period.lastPhaseId, period)
       this._period = period
       this
 
@@ -638,12 +641,12 @@ object Contexts {
       this._scope = typer.scope
       setTypeAssigner(typer)
 
-    def setGadt(gadt: GadtConstraint): this.type =
-      util.Stats.record("Context.setGadt")
-      this._gadt = gadt
+    def setGadtState(gadtState: GadtState): this.type =
+      util.Stats.record("Context.setGadtState")
+      this._gadtState = gadtState
       this
     def setFreshGADTBounds: this.type =
-      setGadt(gadt.fresh)
+      setGadtState(gadtState.fresh)
 
     def setSearchHistory(searchHistory: SearchHistory): this.type =
       util.Stats.record("Context.setSearchHistory")
@@ -737,7 +740,7 @@ object Contexts {
           .updated(notNullInfosLoc, Nil)
           .updated(compilationUnitLoc, NoCompilationUnit)
       c._searchHistory = new SearchRoot
-      c._gadt = GadtConstraint.empty
+      c._gadtState = GadtState(GadtConstraint.empty)
       c
   end FreshContext
 
@@ -770,56 +773,40 @@ object Contexts {
     final def retractMode(mode: Mode): c.type = c.setMode(c.mode &~ mode)
   }
 
-  private def exploreCtx(using Context): FreshContext =
-    util.Stats.record("explore")
-    val base = ctx.base
-    import base._
-    val nestedCtx =
-      if exploresInUse < exploreContexts.size then
-        exploreContexts(exploresInUse).reuseIn(ctx)
-      else
-        val ts = TyperState()
-          .setReporter(ExploringReporter())
-          .setCommittable(false)
-        val c = FreshContext(ctx.base).init(ctx, ctx).setTyperState(ts)
-        exploreContexts += c
-        c
-    exploresInUse += 1
-    val nestedTS = nestedCtx.typerState
-    nestedTS.init(ctx.typerState, ctx.typerState.constraint)
-    nestedCtx
-
-  private def wrapUpExplore(ectx: Context) =
-    ectx.reporter.asInstanceOf[ExploringReporter].reset()
-    ectx.base.exploresInUse -= 1
-
+  /** Run `op` with a pool-allocated context that has an ExporeTyperState. */
   inline def explore[T](inline op: Context ?=> T)(using Context): T =
-    val ectx = exploreCtx
-    try op(using ectx) finally wrapUpExplore(ectx)
+    exploreInFreshCtx(op)
 
+  /** Run `op` with a pool-allocated FreshContext that has an ExporeTyperState. */
   inline def exploreInFreshCtx[T](inline op: FreshContext ?=> T)(using Context): T =
-    val ectx = exploreCtx
-    try op(using ectx) finally wrapUpExplore(ectx)
+    val pool = ctx.base.exploreContextPool
+    val nestedCtx = pool.next()
+    try op(using nestedCtx)
+    finally
+      nestedCtx.typerState.reporter.asInstanceOf[ExploringReporter].reset()
+      pool.free()
 
-  private def changeOwnerCtx(owner: Symbol)(using Context): Context =
-    val base = ctx.base
-    import base._
-    val nestedCtx =
-      if changeOwnersInUse < changeOwnerContexts.size then
-        changeOwnerContexts(changeOwnersInUse).reuseIn(ctx)
-      else
-        val c = FreshContext(ctx.base).init(ctx, ctx)
-        changeOwnerContexts += c
-        c
-    changeOwnersInUse += 1
-    nestedCtx.setOwner(owner).setTyperState(ctx.typerState)
-
-  /** Run `op` in current context, with a mode is temporarily set as specified.
+  /** Run `op` with a pool-allocated context that has a fresh typer state.
+   *  Commit the typer state if `commit` applied to `op`'s result returns true.
    */
+  inline def withFreshTyperState[T](inline op: Context ?=> T, inline commit: T => Context ?=> Boolean)(using Context): T =
+    val pool = ctx.base.freshTSContextPool
+    val nestedCtx = pool.next()
+    try
+      val result = op(using nestedCtx)
+      if commit(result)(using nestedCtx) then
+        nestedCtx.typerState.commit()
+        nestedCtx.typerState.setCommittable(true)
+      result
+    finally
+      pool.free()
+
+  /** Run `op` with a pool-allocated context that has the given `owner`. */
   inline def runWithOwner[T](owner: Symbol)(inline op: Context ?=> T)(using Context): T =
     if Config.reuseOwnerContexts then
-      try op(using changeOwnerCtx(owner))
-      finally ctx.base.changeOwnersInUse -= 1
+      val pool = ctx.base.generalContextPool
+      try op(using pool.next().setOwner(owner).setTyperState(ctx.typerState))
+      finally pool.free()
     else
       op(using ctx.fresh.setOwner(owner))
 
@@ -911,6 +898,47 @@ object Contexts {
       allPhases.find(_.period.containsPhaseId(p.id)).getOrElse(NoPhase)
   }
 
+  class ContextPool:
+    protected def fresh()(using Context): FreshContext =
+      FreshContext(ctx.base).init(ctx, ctx)
+
+    private var inUse: Int = 0
+    private var pool = new mutable.ArrayBuffer[FreshContext]
+
+    def next()(using Context): FreshContext =
+      val base = ctx.base
+      import base._
+      val nestedCtx =
+        if inUse < pool.size then
+          pool(inUse).reuseIn(ctx)
+        else
+          val c = fresh()
+          pool += c
+          c
+      inUse += 1
+      nestedCtx
+
+    final def free(): Unit =
+      inUse -= 1
+  end ContextPool
+
+  class TSContextPool extends ContextPool:
+    override def next()(using Context) =
+      val nextCtx = super.next()
+      nextCtx.typerState.init(ctx.typerState, ctx.typerState.constraint)
+      nextCtx
+
+  class FreshTSContextPool extends TSContextPool:
+    override protected def fresh()(using Context) =
+      super.fresh().setTyperState(ctx.typerState.fresh(committable = true))
+
+  class ExploreContextPool extends TSContextPool:
+    override protected def fresh()(using Context) =
+      val ts = TyperState()
+        .setReporter(ExploringReporter())
+        .setCommittable(false)
+      super.fresh().setTyperState(ts)
+
   /** The essential mutable state of a context base, collected into a common class */
   class ContextState {
     // Symbols state
@@ -977,6 +1005,11 @@ object Contexts {
     /** Flag to suppress inlining, set after overflow */
     private[dotc] var stopInlining: Boolean = false
 
+    /** Cached -Yno-double-bindings setting. This is accessed from `setDenot`, which
+     *  is fairly hot, so we don't want to lookup the setting each time it is called.
+     */
+    private[dotc] var checkNoDoubleBindings = false
+
     /** A variable that records that some error was reported in a globally committable context.
      *  The error will not necessarlily be emitted, since it could still be that
      *  the enclosing context will be aborted. The variable is used as a smoke test
@@ -993,11 +1026,9 @@ object Contexts {
 
     protected[dotc] val indentTab: String = "  "
 
-    private[Contexts] val exploreContexts = new mutable.ArrayBuffer[FreshContext]
-    private[Contexts] var exploresInUse: Int = 0
-
-    private[Contexts] val changeOwnerContexts = new mutable.ArrayBuffer[FreshContext]
-    private[Contexts] var changeOwnersInUse: Int = 0
+    val exploreContextPool = ExploreContextPool()
+    val freshTSContextPool = FreshTSContextPool()
+    val generalContextPool = ContextPool()
 
     private[Contexts] val comparers = new mutable.ArrayBuffer[TypeComparer]
     private[Contexts] var comparersInUse: Int = 0

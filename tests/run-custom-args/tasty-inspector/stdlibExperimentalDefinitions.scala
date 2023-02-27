@@ -66,26 +66,20 @@ val experimentalDefinitionInLibrary = Set(
   "scala.annotation.MacroAnnotation",
 
    //// New APIs: Quotes
-  // Can be stabilized in 3.3.0 (unsure) or later
+  // Should be stabilized in 3.4.0
+  "scala.quoted.Quotes.reflectModule.defnModule.FunctionClass",
+  // Can be stabilized in 3.4.0 (unsure) or later
   "scala.quoted.Quotes.reflectModule.CompilationInfoModule.XmacroSettings",
   "scala.quoted.Quotes.reflectModule.FlagsModule.JavaAnnotation",
   // Cant be stabilized yet.
   // Need newClass variant that can add constructor parameters.
   // Need experimental annotation macros to check that design works.
   "scala.quoted.Quotes.reflectModule.ClassDefModule.apply",
+  "scala.quoted.Quotes.reflectModule.ClassDefModule.module",
   "scala.quoted.Quotes.reflectModule.SymbolModule.newClass",
+  "scala.quoted.Quotes.reflectModule.SymbolModule.newModule",
   "scala.quoted.Quotes.reflectModule.SymbolModule.freshName",
   "scala.quoted.Quotes.reflectModule.SymbolMethods.info",
-
-  // New APIs: Lightweight lazy vals. Can be stabilized in 3.3.0
-  "scala.runtime.LazyVals$.Evaluating",
-  "scala.runtime.LazyVals$.Evaluating$",
-  "scala.runtime.LazyVals$.LazyValControlState",
-  "scala.runtime.LazyVals$.NullValue",
-  "scala.runtime.LazyVals$.NullValue$",
-  "scala.runtime.LazyVals$.Waiting",
-  "scala.runtime.LazyVals$.getStaticFieldOffset",
-  "scala.runtime.LazyVals$.objCAS"
 )
 
 

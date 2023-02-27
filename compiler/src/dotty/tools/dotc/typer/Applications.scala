@@ -272,6 +272,7 @@ object Applications {
     else
       def selectGetter(qual: Tree): Tree =
         val getterDenot = qual.tpe.member(getterName)
+          .accessibleFrom(qual.tpe.widenIfUnstable, superAccess = true) // to reset Local
         if (getterDenot.exists) qual.select(TermRef(qual.tpe, getterName, getterDenot))
         else EmptyTree
       if !meth.isClassConstructor then
@@ -443,10 +444,17 @@ trait Applications extends Compatibility {
     /** The function's type after widening and instantiating polytypes
      *  with TypeParamRefs in constraint set
      */
-    @threadUnsafe lazy val methType: Type = liftedFunType.widen match {
-      case funType: MethodType => funType
-      case funType: PolyType => instantiateWithTypeVars(funType)
-      case tp => tp //was: funType
+    @threadUnsafe lazy val methType: Type = {
+      def rec(t: Type): Type = {
+        t.widen match{
+          case funType: MethodType => funType
+          case funType: PolyType => 
+            rec(instantiateWithTypeVars(funType))
+          case tp => tp
+        }
+      }
+
+      rec(liftedFunType)
     }
 
     @threadUnsafe lazy val liftedFunType: Type =
@@ -713,8 +721,8 @@ trait Applications extends Compatibility {
         || argMatch == ArgMatch.CompatibleCAP
             && {
               val argtpe1 = argtpe.widen
-              val captured = captureWildcards(argtpe1)
-              (captured ne argtpe1) && isCompatible(captured, formal.widenExpr)
+              val captured = captureWildcardsCompat(argtpe1, formal.widenExpr)
+              captured ne argtpe1
             }
 
     /** The type of the given argument */
@@ -1143,8 +1151,12 @@ trait Applications extends Compatibility {
     val typedArgs = if (isNamed) typedNamedArgs(tree.args) else tree.args.mapconserve(typedType(_))
     record("typedTypeApply")
     typedExpr(tree.fun, PolyProto(typedArgs, pt)) match {
-      case _: TypeApply if !ctx.isAfterTyper =>
-        errorTree(tree, em"illegal repeated type application")
+      case fun: TypeApply if !ctx.isAfterTyper =>
+        val function = fun.fun
+        val args = (fun.args ++ tree.args).map(_.show).mkString(", ")
+        errorTree(tree, em"""illegal repeated type application
+                            |You might have meant something like:
+                            |${function}[${args}]""")
       case typedFn =>
         typedFn.tpe.widen match {
           case pt: PolyType =>
@@ -1257,8 +1269,6 @@ trait Applications extends Compatibility {
   def typedUnApply(tree: untpd.Apply, selType: Type)(using Context): Tree = {
     record("typedUnApply")
     val Apply(qual, args) = tree
-    if !ctx.mode.is(Mode.InTypeTest) then
-      checkMatchable(selType, tree.srcPos, pattern = true)
 
     def notAnExtractor(tree: Tree): Tree =
       // prefer inner errors
@@ -1397,12 +1407,13 @@ trait Applications extends Compatibility {
         val unapplyArgType = mt.paramInfos.head
         unapp.println(i"unapp arg tpe = $unapplyArgType, pt = $selType")
         val ownType =
-          if (selType <:< unapplyArgType) {
+          if selType <:< unapplyArgType then
             unapp.println(i"case 1 $unapplyArgType ${ctx.typerState.constraint}")
             fullyDefinedType(unapplyArgType, "pattern selector", tree.srcPos)
             selType.dropAnnot(defn.UncheckedAnnot) // need to drop @unchecked. Just because the selector is @unchecked, the pattern isn't.
-          }
-          else {
+          else
+            if !ctx.mode.is(Mode.InTypeTest) then
+              checkMatchable(selType, tree.srcPos, pattern = true)
             // We ignore whether constraining the pattern succeeded.
             // Constraining only fails if the pattern cannot possibly match,
             // but useless pattern checks detect more such cases, so we simply rely on them instead.
@@ -1411,7 +1422,7 @@ trait Applications extends Compatibility {
             if (patternBound.nonEmpty) unapplyFn = addBinders(unapplyFn, patternBound)
             unapp.println(i"case 2 $unapplyArgType ${ctx.typerState.constraint}")
             unapplyArgType
-          }
+
         val dummyArg = dummyTreeOfType(ownType)
         val unapplyApp = typedExpr(untpd.TypedSplice(Apply(unapplyFn, dummyArg :: Nil)))
         def unapplyImplicits(unapp: Tree): List[Tree] = {
@@ -2406,9 +2417,14 @@ trait Applications extends Compatibility {
       else
         None
     catch
-      case NonFatal(_) => None
+      case ex: UnhandledError => None
 
   def isApplicableExtensionMethod(methodRef: TermRef, receiverType: Type)(using Context): Boolean =
     methodRef.symbol.is(ExtensionMethod) && !receiverType.isBottomType &&
       tryApplyingExtensionMethod(methodRef, nullLiteral.asInstance(receiverType)).nonEmpty
+
+  def captureWildcardsCompat(tp: Type, pt: Type)(using Context): Type =
+    val captured = captureWildcards(tp)
+    if (captured ne tp) && isCompatible(captured, pt) then captured
+    else tp
 }
