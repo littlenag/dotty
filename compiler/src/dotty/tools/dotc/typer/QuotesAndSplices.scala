@@ -25,6 +25,19 @@ import dotty.tools.dotc.util.Stats.record
 import dotty.tools.dotc.reporting.IllegalVariableInPatternAlternative
 import scala.collection.mutable
 
+import scala.annotation.{Annotation, compileTimeOnly}
+import scala.collection.immutable.List
+
+// Plays the same role as scala.quoted.runtime.Expr does, but for export macros
+@compileTimeOnly("Illegal reference to `dotty.tools.dotc.typer.ExportMacro`")
+object ExportMacro:
+
+  /** A export macro splice is desugared by the compiler into a call to this method
+    *
+    *  Calling this method in source has undefined behavior at compile-time
+    */
+  @compileTimeOnly("Illegal reference to `dotty.tools.dotc.typer.ExportMacro.spliceDefns`")
+  def spliceDefns[T](x: scala.quoted.Quotes ?=> List[T]): List[tpd.MemberDef] = ???
 
 /** Type quotes `'{ ... }` and splices `${ ... }` */
 trait QuotesAndSplices {
@@ -68,18 +81,28 @@ trait QuotesAndSplices {
       PrepareInlineable.makeInlineable(tree)
     }
 
-  /** Translate `${ t: Expr[T] }` into expression `t.splice` while tracking the quotation level in the context */
-  def typedSplice(tree: untpd.Splice, pt: Type, inImportExport: Boolean = false)(using Context): Tree = {
+  /**
+    * Depending on context:
+    *
+    * Translate `${ t: Expr[T] }` into expression `t.splice` while tracking the quotation level in the context
+    *
+    * Translate `${ t: List[Definition] }` into expression `t.spliceDefns` while tracking the quotation level in the context
+    */
+  def typedSplice(tree: untpd.Splice, pt: Type)(using Context): Tree = {
     record("typedSplice1")
-    report.echo("typedSplice2")
-    checkSpliceOutsideQuote(tree, inImportExport)
+    val inImportExport = tree.getAttachment(ImportExportInfo).nonEmpty
+    report.echo(s"typedSplice2 inImportExport=$inImportExport")
+    checkSpliceOutsideQuote(tree)
+
+    report.echo(s"typedSplice inImportExport=${tree.hasAttachment(ImportExportInfo)} splice-tree: ${tree.show} owner: ${ctx.owner}\n")
+
     tree.expr match {
       case untpd.Quote(innerExpr) if innerExpr.isTerm =>
         report.warning("Canceled quote directly inside a splice. ${ '{ XYZ } } is equivalent to XYZ.", tree.srcPos)
       case _ =>
     }
-    if (ctx.mode.is(Mode.QuotedPattern))
-      if (isFullyDefined(pt, ForceDegree.flipBottom)) {
+    if (ctx.mode.is(Mode.QuotedPattern)) {
+      if (isFullyDefined(pt, ForceDegree.flipBottom) && !inImportExport) {
         def spliceOwner(ctx: Context): Symbol =
           if (ctx.mode.is(Mode.QuotedPattern)) spliceOwner(ctx.outer) else ctx.owner
         val pat = typedPattern(tree.expr, defn.QuotedExprClass.typeRef.appliedTo(pt))(
@@ -92,7 +115,7 @@ trait QuotesAndSplices {
         report.error(em"Type must be fully defined.\nConsider annotating the splice using a type ascription:\n  ($tree: XYZ).", tree.expr.srcPos)
         tree.withType(UnspecifiedErrorType)
       }
-    else {
+    } else {
       if (StagingContext.level == 0) {
         // Mark the first inline method from the context as a macro
         def markAsMacro(c: Context): Unit =
@@ -101,6 +124,12 @@ trait QuotesAndSplices {
           else if (c.owner.isInlineTrait) c.owner.setFlag(Macro)
           else if (!c.outer.owner.is(Package)) markAsMacro(c.outer)
           else assert(ctx.reporter.hasErrors) // Did not find inline def to mark as macro
+
+        // TODO{mk} what is the compilation model?
+        // will there be a synthetic object definitions are inserted into?
+        // the complexity here is in typing a splice that appears in an export macro
+
+        // Unclear if I want to set this as a macro
         if (inImportExport)
           ctx.owner.setFlag(Macro)
         else
@@ -110,12 +139,22 @@ trait QuotesAndSplices {
 
       val (outerQctx, ctx1) = popQuotes()
 
-      val internalSplice =
-        outerQctx match
-          case Some(qctxRef) => untpd.Apply(untpd.Apply(untpd.ref(defn.QuotedRuntime_exprNestedSplice.termRef), qctxRef), tree.expr)
-          case _ => untpd.Apply(untpd.ref(defn.QuotedRuntime_exprSplice.termRef), tree.expr)
+      if (inImportExport) {
+        // TODO{mk} splices in export statements don't return Expr's.
+        // TODO{mk} instead the expected type here is List[quotes.reflect.Definition] from scala.quoted._
 
-      typedApply(internalSplice, pt)(using ctx1).withSpan(tree.span)
+        // TODO{mk} this should be a proper type, not Any
+        tree.withType(defn.AnyType)
+
+      } else {
+
+        val internalSplice =
+          outerQctx match
+            case Some(qctxRef) => untpd.Apply(untpd.Apply(untpd.ref(defn.QuotedRuntime_exprNestedSplice.termRef), qctxRef), tree.expr)
+            case _ => untpd.Apply(untpd.ref(defn.QuotedRuntime_exprSplice.termRef), tree.expr)
+
+        typedApply(internalSplice, pt)(using ctx1).withSpan(tree.span)
+      }
     }
   }
 
@@ -175,9 +214,8 @@ trait QuotesAndSplices {
     val tpt = typedType(tree.tpt)
     assignType(tree, tpt)
 
-  private def checkSpliceOutsideQuote(tree: untpd.Tree, inImportExportMacro: Boolean)(using Context): Unit =
-    report.echo(s"checkSpliceOutsideQuote inMacro=$inImportExportMacro show: ${tree.show} ${ctx.owner}\n")
-    if (level == 0 && !(ctx.owner.ownersIterator.exists(_.isInlineMethod) || inImportExportMacro || tree.hasAttachment(ImportExportInfo)))
+  private def checkSpliceOutsideQuote(tree: untpd.Tree)(using Context): Unit =
+    if (level == 0 && !(ctx.owner.ownersIterator.exists(_.isInlineMethod) || tree.hasAttachment(ImportExportInfo)))
       report.error("Splice ${...} outside quotes '{...} or inline method", tree.srcPos)
     else if (level < 0)
       report.error(

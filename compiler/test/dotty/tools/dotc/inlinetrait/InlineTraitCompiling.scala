@@ -68,30 +68,35 @@ class InlineTraitCompiling extends DottyTest {
 
   @Test
   def exportMacroSimple: Unit = {
+    // List[quotes.reflect.Definition]
+    // scala needs someway to quote STATEMENTS
+    // handles expressions and types, but not the class building DSL
     val sources = List(
-//      """
-//        | import scala.quoted._
-//        |
-//        | object TestMacro {
-//        |   def dothis(b: Boolean)(using Quotes): Expr[Any] = {
-//        |     if (b)
-//        |       '{
-//        |         object fizzle {
-//        |           def withFizzle = 12
-//        |         }
-//        |       }
-//        |     else
-//        |       '{
-//        |         object swizzle {
-//        |           def withSwizzle = "swizzle"
-//        |         }
-//        |       }
-//        |   }
-//        |
-//        | }
-//      """.stripMargin,
+      """
+        | import scala.quoted._
+        |
+        | object TestMacro {
+        |   def dothis(b: Boolean)(using Quotes): List[quotes.reflect.Definition] = {
+        |     import quotes.reflect.*
+        |     if (b) {
+        |        // def withFizzle = 12
+        |        val helloSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hello"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
+        |        val helloVal = ValDef(helloSymbol, Some(Literal(StringConstant("Hello, World!"))))
+        |        List(helloVal)
+        |      } else {
+        |        // def withSwizzle = "swizzle"
+        |        val holaSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hola"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
+        |        val holaVal = ValDef(holaSymbol, Some(Literal(StringConstant("Hola, World!"))))
+        |        List(holaVal)
+        |      }
+        |   }
+        | }
+      """.stripMargin,
 
-      //        |   inline object Foo = ${TestMacro.dothis(true)}
+      // syntax for a "bundle of statements"
+
+      // Syntax for generated objects
+      // inline object Foo = ${TestMacro.dothis(true)}
 
       // issues
       // check splice outside inline
@@ -113,7 +118,7 @@ class InlineTraitCompiling extends DottyTest {
 
       val printer = new RefinedPrinter(context)
 
-      println("TREE:")
+      println("COMPILED TREE:")
       println(tree.toText(printer).show)
       //val bar = tree.find(tree => tree.symbol.name == termName("bar")).get
       //assertEquals("trait Too", bar.symbol.owner.show)

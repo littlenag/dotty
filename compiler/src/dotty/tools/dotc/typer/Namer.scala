@@ -2,16 +2,30 @@ package dotty.tools
 package dotc
 package typer
 
-import core._
-import ast._
-import Trees._, StdNames._, Scopes._, Denotations._, NamerOps._, ContextOps._
-import Contexts._, Symbols._, Types._, SymDenotations._, Names._, NameOps._, Flags._
-import Decorators._, Comments.{_, given}
+import core.*
+import ast.*
+import Trees.*
+import StdNames.*
+import Scopes.*
+import Denotations.*
+import NamerOps.*
+import ContextOps.*
+import Contexts.*
+import Symbols.*
+import Types.*
+import SymDenotations.*
+import Names.*
+import NameOps.*
+import Flags.*
+import Decorators.*
+import Comments.{*, given}
 import NameKinds.DefaultGetterName
-import ast.desugar, ast.desugar._
-import ProtoTypes._
-import util.Spans._
+import ast.desugar
+import ast.desugar.*
+import ProtoTypes.*
+import util.Spans.*
 import util.Property
+
 import collection.mutable
 import tpd.tpes
 import Variances.alwaysInvariant
@@ -20,15 +34,15 @@ import config.Printers.typr
 import inlines.{Inliner, Inlines, PrepareInlineable}
 import parsing.JavaParsers.JavaParser
 import parsing.Parsers.Parser
-import Annotations._
-import Inferencing._
-import transform.ValueClasses._
-import transform.TypeUtils._
-import transform.SymUtils._
+import Annotations.*
+import Inferencing.*
+import transform.ValueClasses.*
+import transform.TypeUtils.*
+import transform.SymUtils.*
 import TypeErasure.erasure
-import reporting._
+import reporting.*
 import config.Feature.sourceVersion
-import config.SourceVersion._
+import config.SourceVersion.*
 
 
 /** This class creates symbols from definitions and imports and gives them
@@ -60,6 +74,7 @@ class Namer { typer: Typer =>
   val ExportForwarders: Property.Key[List[tpd.MemberDef]] = new Property.Key
   val SymOfTree       : Property.Key[Symbol]              = new Property.Key
   val AttachedDeriver : Property.Key[Deriver]             = new Property.Key
+  val SpliceInExport  : Property.Key[Boolean]             = new Property.Key
     // was `val Deriver`, but that gave shadowing problems with constructor proxies
 
   /** A partial map from unexpanded member and pattern defs and to their expansions.
@@ -1083,14 +1098,20 @@ class Namer { typer: Typer =>
       val buf = new mutable.ListBuffer[tpd.MemberDef]
       val Export(expr,selectors) = exp
 
-      val helpers = ExportForwardingHelpers(exp)
+      //val helpers = ExportForwardingHelpers(exp)
 
       // the export macro will have a type of Any, but we actually have to get the type of the
       // object inside and a path to it.
-      val path = typedAheadExpr(expr, AnySelectionProto)
+
+      // This will inform the Typer that the Splice it sees is part of an Export Macro!
+      expr.pushAttachment(SpliceInExport, true)
+      //expr.pushAttachment(ImportExportInfo, OwningImportExport(exp))
+
+      val path = typedAheadExpr(expr, AnySelectionProto) // crashing here!
 
       // TODO{mk} symbolOfTree in checkSplice
       // here is where we evaluate our macro call
+      // is it though?
 
       val printer = new dotty.tools.dotc.printing.RefinedPrinter(ctx)
 
@@ -1107,13 +1128,6 @@ class Namer { typer: Typer =>
       val forwarders = buf.toList
       exp.pushAttachment(ExportForwarders, forwarders)
       forwarders
-
-    }
-
-    //
-
-    /** The forwarders defined by export `exp` */
-    class ExportForwardingHelpers(exp: Export)(using Context) {
 
     }
 
