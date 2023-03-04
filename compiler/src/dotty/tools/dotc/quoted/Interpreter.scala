@@ -325,7 +325,7 @@ end Interpreter
 
 object Interpreter:
   /** Exception that stops interpretation if some issue is found */
-  class StopInterpretation(val msg: Message, val pos: SrcPos) extends Exception
+  case class StopInterpretation(val msg: Message, val pos: SrcPos) extends Exception
 
   object Call:
     import tpd._

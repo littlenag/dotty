@@ -23,21 +23,11 @@ import dotty.tools.dotc.typer.Inferencing.*
 import dotty.tools.dotc.util.Spans.*
 import dotty.tools.dotc.util.Stats.record
 import dotty.tools.dotc.reporting.IllegalVariableInPatternAlternative
-import scala.collection.mutable
 
+import scala.collection.mutable
 import scala.annotation.{Annotation, compileTimeOnly}
 import scala.collection.immutable.List
-
-// Plays the same role as scala.quoted.runtime.Expr does, but for export macros
-@compileTimeOnly("Illegal reference to `dotty.tools.dotc.typer.ExportMacro`")
-object ExportMacro:
-
-  /** A export macro splice is desugared by the compiler into a call to this method
-    *
-    *  Calling this method in source has undefined behavior at compile-time
-    */
-  @compileTimeOnly("Illegal reference to `dotty.tools.dotc.typer.ExportMacro.spliceDefns`")
-  def spliceDefns[T](x: scala.quoted.Quotes ?=> List[T]): List[tpd.MemberDef] = ???
+import scala.quoted.Quotes
 
 /** Type quotes `'{ ... }` and splices `${ ... }` */
 trait QuotesAndSplices {
@@ -130,11 +120,12 @@ trait QuotesAndSplices {
         // the complexity here is in typing a splice that appears in an export macro
 
         // Unclear if I want to set this as a macro
-        if (inImportExport)
-          ctx.owner.setFlag(Macro)
-        else
+        if (inImportExport) {
           report.echo(s"owner: ${ctx.owner}")
+          ctx.owner.setFlag(Macro)
+        } else {
           markAsMacro(ctx)
+        }
       }
 
       val (outerQctx, ctx1) = popQuotes()
@@ -143,8 +134,26 @@ trait QuotesAndSplices {
         // TODO{mk} splices in export statements don't return Expr's.
         // TODO{mk} instead the expected type here is List[quotes.reflect.Definition] from scala.quoted._
 
+        // how could a class be built incrementally using expression-oriented language
+        // need an algebra for building classes or types
+
+        // this is incomplete
+
         // TODO{mk} this should be a proper type, not Any
-        tree.withType(defn.AnyType)
+        //tree.withType(defn.AnyType)
+
+        val runtimeModule: Symbol = defn.QuotedRuntimeModule // requiredModule("dotty.tools.dotc.typer.ExportMacro")
+        val exprSpliceDefns : Symbol = runtimeModule.requiredMethod("spliceDefns")
+
+        val internalSplice =
+            untpd.Apply(untpd.ref(exprSpliceDefns.termRef), tree.expr)
+
+        val finalTree = typedApply(internalSplice, pt)(using ctx1).withSpan(tree.span)
+
+        report.echo(s"typedSplice inImportExport=${tree.hasAttachment(ImportExportInfo)} splice-tree: ${tree.show} owner: ${ctx.owner} final-tree: $finalTree\n")
+
+        finalTree
+
 
       } else {
 
@@ -153,7 +162,12 @@ trait QuotesAndSplices {
             case Some(qctxRef) => untpd.Apply(untpd.Apply(untpd.ref(defn.QuotedRuntime_exprNestedSplice.termRef), qctxRef), tree.expr)
             case _ => untpd.Apply(untpd.ref(defn.QuotedRuntime_exprSplice.termRef), tree.expr)
 
-        typedApply(internalSplice, pt)(using ctx1).withSpan(tree.span)
+        val finalTree = typedApply(internalSplice, pt)(using ctx1).withSpan(tree.span)
+
+        report.echo(s"typedSplice inImportExport=${tree.hasAttachment(ImportExportInfo)} splice-tree: ${tree.show} owner: ${ctx.owner} final-tree: $finalTree\n")
+
+        finalTree
+
       }
     }
   }

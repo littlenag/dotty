@@ -44,7 +44,7 @@ trait DottyTest extends ContextEscapeDetection {
     fc.setProperty(ContextDoc, new ContextDocstrings)
   }
 
-  private def compilerWithChecker(phase: String)(assertion: (tpd.Tree, Context) => Unit) = new Compiler {
+  def compilerWithChecker(phase: String)(assertion: (tpd.Tree, Context) => Unit) = new Compiler {
     override def phases = {
       val allPhases = super.phases
       val targetPhase = allPhases.flatten.find(p => p.phaseName == phase).get
@@ -69,6 +69,16 @@ trait DottyTest extends ContextEscapeDetection {
     val run = c.newRun
     run.compileFromStrings(sources)
     run.runContext
+  }
+
+  def checkCompile(checkAfterPhase: String, sourcesA: List[String], sourcesB: List[String])(assertion: (tpd.Tree, Context) => Unit): Context = {
+    val c = compilerWithChecker(checkAfterPhase)(assertion)
+    val runA = c.newRun
+    runA.compileFromStrings(sourcesA)
+    runA.runContext
+    val runB = c.newRun
+    runB.compileFromStrings(sourcesB)
+    runB.runContext
   }
 
   def checkTypes(source: String, typeStrings: String*)(assertion: (List[Type], Context) => Unit): Unit =

@@ -8,7 +8,7 @@ class ScopeException(msg: String) extends Exception(msg)
 object ScopeException:
   def checkInCorrectScope(scope: Scope, currentScope: Scope, tree: Tree, kind: String)(using Context): Unit =
     if scope.root != currentScope.root then
-      throw new ScopeException(s"Cannot use $kind oustide of the macro splice `$${...}` or the scala.quoted.staging.run(...)` where it was defined")
+      throw new ScopeException(s"Cannot use $kind outside of the macro splice `$${...}` or the scala.quoted.staging.run(...)` where it was defined")
 
     if ctx.settings.XcheckMacros.value && !scope.isOuterScopeOf(currentScope) then
       throw new ScopeException(

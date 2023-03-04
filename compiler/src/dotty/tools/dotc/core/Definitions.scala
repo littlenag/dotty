@@ -888,6 +888,7 @@ class Definitions {
   @tu lazy val QuotedRuntimeModule: Symbol = requiredModule("scala.quoted.runtime.Expr")
     @tu lazy val QuotedRuntime_exprQuote  : Symbol = QuotedRuntimeModule.requiredMethod("quote")
     @tu lazy val QuotedRuntime_exprSplice : Symbol = QuotedRuntimeModule.requiredMethod("splice")
+    @tu lazy val QuotedRuntime_exprSpliceDefns : Symbol = QuotedRuntimeModule.requiredMethod("spliceDefns")
     @tu lazy val QuotedRuntime_exprNestedSplice : Symbol = QuotedRuntimeModule.requiredMethod("nestedSplice")
 
   @tu lazy val QuotedRuntime_SplicedTypeAnnot: ClassSymbol = requiredClass("scala.quoted.runtime.SplicedType")

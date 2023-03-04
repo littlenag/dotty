@@ -43,6 +43,9 @@ import TypeErasure.erasure
 import reporting.*
 import config.Feature.sourceVersion
 import config.SourceVersion.*
+import dotty.tools.dotc.transform.BetaReduce
+
+import scala.quoted.Quotes
 
 
 /** This class creates symbols from definitions and imports and gives them
@@ -1095,6 +1098,10 @@ class Namer { typer: Typer =>
 
     /** The forwarders defined by export ${macro(..)} */
     private def exportMacroForwarders(exp: Export)(using Context): List[tpd.MemberDef] = {
+      import dotty.tools.dotc.quoted.Interpreter
+      import dotty.tools.dotc.printing.RefinedPrinter
+      import scala.quoted.runtime.impl.QuotesImpl
+
       val buf = new mutable.ListBuffer[tpd.MemberDef]
       val Export(expr,selectors) = exp
 
@@ -1103,24 +1110,79 @@ class Namer { typer: Typer =>
       // the export macro will have a type of Any, but we actually have to get the type of the
       // object inside and a path to it.
 
+      // ImportExportInfo is already added!!
       // This will inform the Typer that the Splice it sees is part of an Export Macro!
       expr.pushAttachment(SpliceInExport, true)
-      //expr.pushAttachment(ImportExportInfo, OwningImportExport(exp))
 
-      val path = typedAheadExpr(expr, AnySelectionProto) // crashing here!
+      // this typechecks the macro call
+      val path = typedAheadExpr(expr, AnySelectionProto)
+
+      // turn path which is Splice into Inlined
+
+      //val Splice(inner) = path
 
       // TODO{mk} symbolOfTree in checkSplice
       // here is where we evaluate our macro call
       // is it though?
 
-      val printer = new dotty.tools.dotc.printing.RefinedPrinter(ctx)
+      val printer = new RefinedPrinter(ctx)
 
       // Returns an Inlined
       //val inlined = Inliner.inlineCall(path)
 
-      //report.echo(s"inlined: ${inlined}")
+      report.echo(s"[exportMacroForwarders] Export Expr=$expr")
+      report.echo(s"[exportMacroForwarders] Path=$path")
 
-      // destructure i into its object, type check the object?
+      def cancelQuotes(tree: Tree): Tree =
+        tree match
+          //case Quoted(Spliced(inner)) => inner
+          case _ => tree
+
+      // The regular code calling expandMacro is unwrapping the apply and ignore the call to the 'splice' function
+      val head = cancelQuotes(tpd.constToLiteral(BetaReduce(path))) match {
+        case res: Apply if res.symbol == defn.QuotedRuntime_exprSpliceDefns =>
+          res.args.head
+        case other =>
+          report.echo(s"[exportMacroForwarders] Incompatible tree=$other")
+          null
+      }
+
+      if head == null then
+        throw new RuntimeException(s"Incompatible tree $path")
+
+      val interpreter = new Interpreter(exp.srcPos, MacroClassLoader.fromContext)
+
+      val allTrees = List.newBuilder[DefTree]
+      var insertedAfter: List[List[DefTree]] = Nil
+
+      // Quotes => res.args.head
+      // We unwrap the curried apply of spliceDefns and instead just interpret to a lambda type
+      val exportMacroInstance = interpreter.interpret[Quotes => List[?]](head).get
+      //assert(annotInstance.getClass.getClassLoader.loadClass("scala.annotation.MacroAnnotation").isInstance(annotInstance))
+
+      val quotes = QuotesImpl() //(using SpliceScope.contextWithNewSpliceScope(tree.symbol.sourcePos)(using MacroExpansion.context(tree)).withOwner(tree.symbol.owner))
+      //exportMacroInstance.spliceDefns(using quotes)(path.asInstanceOf[scala.quoted.Expr[_]])
+
+      //val f = (q:Quotes) ?=> path.asInstanceOf[scala.quoted.Expr[_]]
+
+      try {
+        val h = exportMacroInstance(quotes)
+        val g = h.map(_.asInstanceOf[tpd.MemberDef])
+        buf.addAll(g)
+      } catch {
+        case ex @ Interpreter.StopInterpretation(msg, pos) =>
+          report.echo(s"Exception while running spliceDefns macro: $msg $pos")
+          throw ex
+        case ex: CompilationUnit.SuspendException =>
+          report.echo(s"Suspended while running spliceDefns macro.")
+          throw ex
+        case ex: Exception =>
+          report.echo(s"Exception while running spliceDefns macro: $ex ${ex.getMessage}")
+          ex.printStackTrace()
+          throw ex
+      }
+
+      //report.echo(s"inlined: ${inlined}")
 
       //addForwarders(selectors, Nil)
 
@@ -1128,7 +1190,6 @@ class Namer { typer: Typer =>
       val forwarders = buf.toList
       exp.pushAttachment(ExportForwarders, forwarders)
       forwarders
-
     }
 
     //

@@ -2,6 +2,7 @@ package scala.quoted
 package runtime
 
 import scala.annotation.{Annotation, compileTimeOnly}
+import scala.collection.immutable.List
 
 @compileTimeOnly("Illegal reference to `scala.quoted.runtime.Expr`")
 object Expr:
@@ -27,3 +28,7 @@ object Expr:
    */
   @compileTimeOnly("Illegal reference to `scala.quoted.runtime.Expr.nestedSplice`")
   def nestedSplice[T](q: Quotes)(x: q.Nested ?=> scala.quoted.Expr[T]): T = ???
+
+  // T= tpd.MemberDef | quotes.reflect.Definition
+  @compileTimeOnly("Illegal reference to `scala.quoted.runtime.Expr.spliceDefns`")
+  def spliceDefns[T](x: Quotes ?=> List[T]): List[T] = ???
