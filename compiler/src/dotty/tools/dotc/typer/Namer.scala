@@ -1165,6 +1165,10 @@ class Namer { typer: Typer =>
 
       //val f = (q:Quotes) ?=> path.asInstanceOf[scala.quoted.Expr[_]]
 
+      // i need to stop and spend more time understanding how just reguar export works
+      // it could be that because phases run to completion expanding the export macro here
+      // just fundamentally can't work
+
       try {
         val h = exportMacroInstance(quotes)
         val g = h.map(_.asInstanceOf[tpd.MemberDef])
