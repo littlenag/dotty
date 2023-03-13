@@ -154,7 +154,7 @@ class InlineTraitCompiling extends DottyTest {
     val Foo =
       """
         | class Foo {
-        |   export ${TestMacro.dothis(true)}._
+        |   export ${TestMacro.dothis(false)}._
         | }
       """.stripMargin
 

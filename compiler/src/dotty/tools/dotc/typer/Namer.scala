@@ -33,7 +33,7 @@ import config.{Config, Feature}
 import config.Printers.typr
 import inlines.{Inliner, Inlines, PrepareInlineable}
 import parsing.JavaParsers.JavaParser
-import parsing.Parsers.Parser
+import parsing.Parsers.{ImportExportInfo, OwningImportExport, Parser}
 import Annotations.*
 import Inferencing.*
 import transform.ValueClasses.*
@@ -43,9 +43,11 @@ import TypeErasure.erasure
 import reporting.*
 import config.Feature.sourceVersion
 import config.SourceVersion.*
+import dotty.tools.dotc.quoted.MacroExpansion
 import dotty.tools.dotc.transform.BetaReduce
 
 import scala.quoted.Quotes
+import scala.quoted.runtime.impl.SpliceScope
 
 
 /** This class creates symbols from definitions and imports and gives them
@@ -1114,6 +1116,11 @@ class Namer { typer: Typer =>
       // This will inform the Typer that the Splice it sees is part of an Export Macro!
       expr.pushAttachment(SpliceInExport, true)
 
+      val owner = expr.getAttachment(ImportExportInfo) match {
+        case Some(value) => value.owner
+        case None => throw new RuntimeException(s"ImportExportInfo not found! $expr")
+      }
+
       // this typechecks the macro call
       val path = typedAheadExpr(expr, AnySelectionProto)
 
@@ -1130,6 +1137,7 @@ class Namer { typer: Typer =>
       // Returns an Inlined
       //val inlined = Inliner.inlineCall(path)
 
+      report.echo(s"[exportMacroForwarders] Export Owner=$owner  ctx owner ${ctx.owner}")
       report.echo(s"[exportMacroForwarders] Export Expr=$expr")
       report.echo(s"[exportMacroForwarders] Path=$path")
 
@@ -1147,20 +1155,30 @@ class Namer { typer: Typer =>
           null
       }
 
-      if head == null then
+      if head == null then {
+        report.echo(s"[exportMacroForwarders] Incompatible tree")
         throw new RuntimeException(s"Incompatible tree $path")
+      }
 
       val interpreter = new Interpreter(exp.srcPos, MacroClassLoader.fromContext)
 
-      val allTrees = List.newBuilder[DefTree]
-      var insertedAfter: List[List[DefTree]] = Nil
+      report.echo(s"[exportMacroForwarders] Interpreter loaded")
 
       // Quotes => res.args.head
       // We unwrap the curried apply of spliceDefns and instead just interpret to a lambda type
       val exportMacroInstance = interpreter.interpret[Quotes => List[?]](head).get
       //assert(annotInstance.getClass.getClassLoader.loadClass("scala.annotation.MacroAnnotation").isInstance(annotInstance))
 
-      val quotes = QuotesImpl() //(using SpliceScope.contextWithNewSpliceScope(tree.symbol.sourcePos)(using MacroExpansion.context(tree)).withOwner(tree.symbol.owner))
+      report.echo(s"[exportMacroForwarders] Interpreter run")
+
+      val tree = owner
+
+      // TODO this is the quotes impl that is crashing!!
+      val quotes = QuotesImpl()(using SpliceScope.contextWithNewSpliceScope(ctx.owner.sourcePos)(using MacroExpansion.context(tree)).withOwner(ctx.owner))
+
+      report.echo(s"[exportMacroForwarders] Quotes Impl created")
+
+      //val quotes = QuotesImpl() //(using SpliceScope.contextWithNewSpliceScope(tree.symbol.sourcePos)(using MacroExpansion.context(tree)).withOwner(tree.symbol.owner))
       //exportMacroInstance.spliceDefns(using quotes)(path.asInstanceOf[scala.quoted.Expr[_]])
 
       //val f = (q:Quotes) ?=> path.asInstanceOf[scala.quoted.Expr[_]]
@@ -1171,6 +1189,7 @@ class Namer { typer: Typer =>
 
       try {
         val h = exportMacroInstance(quotes)
+        report.echo(s"[exportMacroForwarders] RAN MACRO SUCCESSFULLY [${h.length}] $h")
         val g = h.map(_.asInstanceOf[tpd.MemberDef])
         buf.addAll(g)
       } catch {
