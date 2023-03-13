@@ -138,12 +138,12 @@ class InlineTraitCompiling extends DottyTest {
         |     import quotes.reflect.*
         |     if (b) {
         |        // def withFizzle = 12
-        |        val helloSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hello"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
+        |        val helloSymbol = Symbol.newVal(Symbol.spliceOwner, "hello", TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
         |        val helloVal = ValDef(helloSymbol, Some(Literal(StringConstant("Hello, World!"))))
         |        List(helloVal)
         |      } else {
         |        // def withSwizzle = "swizzle"
-        |        val holaSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hola"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
+        |        val holaSymbol = Symbol.newVal(Symbol.spliceOwner, "hola", TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
         |        val holaVal = ValDef(holaSymbol, Some(Literal(StringConstant("Hola, World!"))))
         |        List(holaVal)
         |      }
