@@ -76,6 +76,9 @@ class InlineTraitCompiling extends DottyTest {
         |   def dothis[T: Type](b: Boolean)(using Quotes): List[quotes.reflect.Definition] = {
         |     val qq: quotes.type = quotes
         |     import qq.reflect.*
+        |     val tt = TypeTree.of[T]
+        |     val fields = tt.symbol.caseFields.mkString(", ")
+        |     val fullName = tt.symbol.fullName
         |     import scala.compiletime.{summonFrom, summonInline, erasedValue}
         |     val d = Type.of[T] match {
         |       case '[String *: String *: EmptyTuple] => 12
@@ -87,7 +90,7 @@ class InlineTraitCompiling extends DottyTest {
         |
         |     if (b) {
         |        val helloSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hello"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
-        |        val helloVal = ValDef(helloSymbol, Some(Literal(StringConstant(s"Hello, World! $c"))))
+        |        val helloVal = ValDef(helloSymbol, Some(Literal(StringConstant(s"Hello, World! $c $fields $fullName"))))
         |        List(helloVal)
         |      } else {
         |        val holaSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hola"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
@@ -102,10 +105,10 @@ class InlineTraitCompiling extends DottyTest {
       // sin
 
       """
-        | case class Bar(i: Int)
+        | case class Bar(bubbles: Int)
         | class Foo {
         |   val xy = (1,4)
-        |   export ${TestMacro.dothis[xy.type](true)}._
+        |   export ${TestMacro.dothis[Bar](true)}._
         | }
       """.stripMargin
     )
