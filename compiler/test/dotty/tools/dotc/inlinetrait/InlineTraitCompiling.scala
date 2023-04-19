@@ -66,36 +66,46 @@ class InlineTraitCompiling extends DottyTest {
     }
   }
 
-  //@Test
+  @Test
   def exportMacroSimple: Unit = {
-    // List[quotes.reflect.Definition]
-    // scala needs someway to quote STATEMENTS
-    // handles expressions and types, but not the class building DSL
     val sources = List(
       """
         | import scala.quoted._
         |
         | object TestMacro {
-        |   def dothis(b: Boolean)(using Quotes): List[quotes.reflect.Definition] = {
-        |     import quotes.reflect.*
+        |   def dothis[T: Type](b: Boolean)(using Quotes): List[quotes.reflect.Definition] = {
+        |     val qq: quotes.type = quotes
+        |     import qq.reflect.*
+        |     import scala.compiletime.{summonFrom, summonInline, erasedValue}
+        |     val d = Type.of[T] match {
+        |       case '[String *: String *: EmptyTuple] => 12
+        |       case '[Int *: Int *: EmptyTuple] => 23
+        |       case _ => 2
+        |     }
+        |
+        |     val c = 2 + d
+        |
         |     if (b) {
-        |        // def withFizzle = 12
         |        val helloSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hello"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
-        |        val helloVal = ValDef(helloSymbol, Some(Literal(StringConstant("Hello, World!"))))
+        |        val helloVal = ValDef(helloSymbol, Some(Literal(StringConstant(s"Hello, World! $c"))))
         |        List(helloVal)
         |      } else {
-        |        // def withSwizzle = "swizzle"
         |        val holaSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hola"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
-        |        val holaVal = ValDef(holaSymbol, Some(Literal(StringConstant("Hola, World!"))))
+        |        val holaVal = ValDef(holaSymbol, Some(Literal(StringConstant(s"Hola, World! $c"))))
         |        List(holaVal)
         |      }
         |   }
         | }
       """.stripMargin,
 
+      // need some way to pass types without needing to synthesize a value!
+      // sin
+
       """
+        | case class Bar(i: Int)
         | class Foo {
-        |   //export ${TestMacro.dothis(true)}._
+        |   val xy = (1,4)
+        |   export ${TestMacro.dothis[xy.type](true)}._
         | }
       """.stripMargin
     )
@@ -124,7 +134,7 @@ class InlineTraitCompiling extends DottyTest {
     }
   }
 
-  @Test
+  //@Test
   def exportMacroSimple2: Unit = {
     // List[quotes.reflect.Definition]
     // scala needs someway to quote STATEMENTS
@@ -137,12 +147,10 @@ class InlineTraitCompiling extends DottyTest {
         |   def dothis(b: Boolean)(using Quotes): List[quotes.reflect.Definition] = {
         |     import quotes.reflect.*
         |     if (b) {
-        |        // def withFizzle = 12
         |        val helloSymbol = Symbol.newVal(Symbol.spliceOwner, "hello", TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
         |        val helloVal = ValDef(helloSymbol, Some(Literal(StringConstant("Hello, World!"))))
         |        List(helloVal)
         |      } else {
-        |        // def withSwizzle = "swizzle"
         |        val holaSymbol = Symbol.newVal(Symbol.spliceOwner, "hola", TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
         |        val holaVal = ValDef(holaSymbol, Some(Literal(StringConstant("Hola, World!"))))
         |        List(holaVal)

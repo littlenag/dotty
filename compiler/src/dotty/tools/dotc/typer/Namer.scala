@@ -1160,49 +1160,53 @@ class Namer { typer: Typer =>
         throw new RuntimeException(s"Incompatible tree $path")
       }
 
-      val interpreter = new Interpreter(exp.srcPos, MacroClassLoader.fromContext)
+      val context = SpliceScope.contextWithNewSpliceScope(ctx.owner.sourcePos)(using MacroExpansion.context(owner)).withOwner(ctx.owner)
 
-      report.echo(s"[exportMacroForwarders] Interpreter loaded")
+      inContext(context) {
+        //val interpreter = new Interpreter(exp.srcPos, MacroClassLoader.fromContext)
+        val interpreter = new dotty.tools.dotc.transform.Splicer.SpliceInterpreter(exp.srcPos, MacroClassLoader.fromContext)
 
-      // Quotes => res.args.head
-      // We unwrap the curried apply of spliceDefns and instead just interpret to a lambda type
-      val exportMacroInstance = interpreter.interpret[Quotes => List[?]](head).get
-      //assert(annotInstance.getClass.getClassLoader.loadClass("scala.annotation.MacroAnnotation").isInstance(annotInstance))
+        report.echo(s"[exportMacroForwarders] Interpreter loaded")
 
-      report.echo(s"[exportMacroForwarders] Interpreter run")
+        // Quotes => res.args.head
+        // We unwrap the curried apply of spliceDefns and instead just interpret to a lambda type
+        val exportMacroInstance = interpreter.interpret[Quotes => List[?]](head).get
+        //assert(annotInstance.getClass.getClassLoader.loadClass("scala.annotation.MacroAnnotation").isInstance(annotInstance))
 
-      val tree = owner
+        report.echo(s"[exportMacroForwarders] Interpreter run")
 
-      // TODO this is the quotes impl that is crashing!!
-      val quotes = QuotesImpl()(using SpliceScope.contextWithNewSpliceScope(ctx.owner.sourcePos)(using MacroExpansion.context(tree)).withOwner(ctx.owner))
+        //val tree = owner
 
-      report.echo(s"[exportMacroForwarders] Quotes Impl created")
+        val quotes = QuotesImpl()
 
-      //val quotes = QuotesImpl() //(using SpliceScope.contextWithNewSpliceScope(tree.symbol.sourcePos)(using MacroExpansion.context(tree)).withOwner(tree.symbol.owner))
-      //exportMacroInstance.spliceDefns(using quotes)(path.asInstanceOf[scala.quoted.Expr[_]])
+        report.echo(s"[exportMacroForwarders] Quotes Impl created")
 
-      //val f = (q:Quotes) ?=> path.asInstanceOf[scala.quoted.Expr[_]]
+        //val quotes = QuotesImpl() //(using SpliceScope.contextWithNewSpliceScope(tree.symbol.sourcePos)(using MacroExpansion.context(tree)).withOwner(tree.symbol.owner))
+        //exportMacroInstance.spliceDefns(using quotes)(path.asInstanceOf[scala.quoted.Expr[_]])
 
-      // i need to stop and spend more time understanding how just reguar export works
-      // it could be that because phases run to completion expanding the export macro here
-      // just fundamentally can't work
+        //val f = (q:Quotes) ?=> path.asInstanceOf[scala.quoted.Expr[_]]
 
-      try {
-        val h = exportMacroInstance(quotes)
-        report.echo(s"[exportMacroForwarders] RAN MACRO SUCCESSFULLY [${h.length}] $h")
-        val g = h.map(_.asInstanceOf[tpd.MemberDef])
-        buf.addAll(g)
-      } catch {
-        case ex @ Interpreter.StopInterpretation(msg, pos) =>
-          report.echo(s"Exception while running spliceDefns macro: $msg $pos")
-          throw ex
-        case ex: CompilationUnit.SuspendException =>
-          report.echo(s"Suspended while running spliceDefns macro.")
-          throw ex
-        case ex: Exception =>
-          report.echo(s"Exception while running spliceDefns macro: $ex ${ex.getMessage}")
-          ex.printStackTrace()
-          throw ex
+        // i need to stop and spend more time understanding how just regular export works
+        // it could be that because phases run to completion expanding the export macro here
+        // just fundamentally can't work
+
+        try {
+          val h = exportMacroInstance(quotes)
+          report.echo(s"[exportMacroForwarders] RAN MACRO SUCCESSFULLY [${h.length}] $h")
+          val g = h.map(_.asInstanceOf[tpd.MemberDef])
+          buf.addAll(g)
+        } catch {
+          case ex@Interpreter.StopInterpretation(msg, pos) =>
+            report.echo(s"Exception while running spliceDefns macro (stopped interpretation): $msg $pos")
+            throw ex
+          case ex: CompilationUnit.SuspendException =>
+            report.echo(s"Suspended while running spliceDefns macro (suspend).")
+            throw ex
+          case ex: Exception =>
+            report.echo(s"Exception while running spliceDefns macro (other): $ex ${ex.getMessage}")
+            ex.printStackTrace()
+            throw ex
+        }
       }
 
       //report.echo(s"inlined: ${inlined}")

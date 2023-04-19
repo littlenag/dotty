@@ -236,7 +236,7 @@ object Splicer {
   /** Tree interpreter that evaluates the tree.
    *  Interpreter is assumed to start at quotation level -1.
    */
-  private class SpliceInterpreter(pos: SrcPos, classLoader: ClassLoader)(using Context) extends Interpreter(pos, classLoader) {
+  class SpliceInterpreter(pos: SrcPos, classLoader: ClassLoader)(using Context) extends Interpreter(pos, classLoader) {
 
     override protected  def interpretTree(tree: Tree)(implicit env: Env): Object = tree match {
       // Interpret level -1 quoted code `'{...}` (assumed without level 0 splices)
