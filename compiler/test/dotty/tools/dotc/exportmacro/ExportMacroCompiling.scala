@@ -1,4 +1,4 @@
-package dotty.tools.dotc.inlinetrait
+package dotty.tools.dotc.exportmacro
 
 import dotty.tools.DottyTest
 import dotty.tools.dotc.ast.{Trees,tpd}
@@ -10,7 +10,7 @@ import dotty.tools.dotc.core.Contexts.{Context, ctx}
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class InlineTraitCompiling extends DottyTest {
+class ExportMacroCompiling extends DottyTest {
 
   private def newContext = {
     initialCtx.setSetting(ctx.settings.color, "never")
