@@ -100,10 +100,6 @@ class ExportMacroCompiling extends DottyTest {
         |   }
         | }
       """.stripMargin,
-
-      // need some way to pass types without needing to synthesize a value!
-      // sin
-
       """
         | case class Bar(bubbles: Int)
         | class Foo {
@@ -114,13 +110,6 @@ class ExportMacroCompiling extends DottyTest {
     )
 
     println("Export Macro Test")
-
-    // Seems that I've gone as far as I can.
-    // At this point the typer is throwing a suspend exception since the TestMacro class can't be loaded via
-    // reflection since it doesn't exist yet. This causes the Foo class to not print.
-
-    // The "fix" will be to suspend typing Foo until TestMacro has been completely processed. It isn't clear
-    // how this is done.
 
     // typer inlining genBCode
     checkCompile("genBCode", sources) { (tree, context) =>
@@ -139,9 +128,6 @@ class ExportMacroCompiling extends DottyTest {
 
   //@Test
   def exportMacroSimple2: Unit = {
-    // List[quotes.reflect.Definition]
-    // scala needs someway to quote STATEMENTS
-    // handles expressions and types, but not the class building DSL
     val TestMacro =
       """
         | import scala.quoted._
@@ -171,13 +157,6 @@ class ExportMacroCompiling extends DottyTest {
 
     println("Export Macro Test")
 
-    // Seems that I've gone as far as I can.
-    // At this point the typer is throwing a suspend exception since the TestMacro class can't be loaded via
-    // reflection since it doesn't exist yet. This causes the Foo class to not print.
-
-    // The "fix" will be to suspend typing Foo until TestMacro has been completely processed. It isn't clear
-    // how this is done.
-
     // typer inlining genBCode
     checkCompile("genBCode", List(TestMacro), List(Foo)) { (tree, context) =>
       given Context = context
@@ -193,6 +172,9 @@ class ExportMacroCompiling extends DottyTest {
     }
   }
 }
+
+// scala needs someway to quote STATEMENTS
+// handles expressions and types, but not the class building DSL
 
 // syntax for a "bundle of statements"
 
