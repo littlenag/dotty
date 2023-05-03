@@ -72,42 +72,37 @@ class ExportMacroCompiling extends DottyTest {
       """
         | import scala.quoted._
         |
-        | object TestMacro {
-        |   def dothis[T: Type](b: Boolean)(using Quotes): List[quotes.reflect.Definition] = {
+        | object ClassPatch {
+        |
+        |
+        |   def patch[Base: Type, Field <: Tuple : Type](targetName: String)(using Quotes): List[quotes.reflect.Definition] = {
         |     val qq: quotes.type = quotes
         |     import qq.reflect.*
-        |     val tt = TypeTree.of[T]
+        |     val tt = TypeTree.of[Base]
         |     val fields = tt.symbol.caseFields.mkString(", ")
         |     val fullName = tt.symbol.fullName
         |     import scala.compiletime.{summonFrom, summonInline, erasedValue}
-        |     val d = Type.of[T] match {
+        |     val d = Type.of[Field] match {
         |       case '[String *: String *: EmptyTuple] => 12
-        |       case '[Int *: Int *: EmptyTuple] => 23
         |       case _ => 2
         |     }
         |
-        |     val c = 2 + d
+        |     Nil
         |
-        |     if (b) {
-        |        val helloSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hello"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
-        |        val helloVal = ValDef(helloSymbol, Some(Literal(StringConstant(s"Hello, World! $c $fields $fullName"))))
-        |        List(helloVal)
-        |      } else {
-        |        val holaSymbol = Symbol.newVal(Symbol.spliceOwner, Symbol.freshName("hola"), TypeRepr.of[String], Flags.EmptyFlags, Symbol.noSymbol)
-        |        val holaVal = ValDef(holaSymbol, Some(Literal(StringConstant(s"Hola, World! $c"))))
-        |        List(holaVal)
-        |      }
         |   }
         | }
       """.stripMargin,
       """
-        | case class Bar(bubbles: Int)
-        | class Foo {
-        |   val xy = (1,4)
-        |   export ${TestMacro.dothis[Bar](true)}._
+        | case class Point1D(x: Float)
+        | class Points {
+        |   type Field = ("y", Float)
+        |   export ${ClassPatch.patch[Point1D, ("y", Float)]("Point2D")}.*
         | }
       """.stripMargin
     )
+
+    //type T = ("f", Float)
+    //var t: T = ("f", 1.0f)
 
     println("Export Macro Test")
 
