@@ -11,7 +11,6 @@ import dotty.tools.dotc.core.Decorators.*
 import dotty.tools.dotc.core.Flags.*
 import dotty.tools.dotc.core.NameKinds.PatMatGivenVarName
 import dotty.tools.dotc.core.Names.*
-import dotty.tools.dotc.core.StagingContext.*
 import dotty.tools.dotc.core.StdNames.*
 import dotty.tools.dotc.core.Symbols.*
 import dotty.tools.dotc.core.Types.*
@@ -120,11 +119,7 @@ trait QuotesAndSplices {
           else if (!c.outer.owner.is(Package)) markAsMacro(c.outer)
           else assert(ctx.reporter.hasErrors) // Did not find inline def to mark as macro
 
-        // TODO{mk} what is the compilation model?
-        // will there be a synthetic object definitions are inserted into?
-        // the complexity here is in typing a splice that appears in an export macro
-
-        // Unclear if I want to set this as a macro
+        // Unclear if I'm supposed to set this as a macro
         if (inImportExport) {
           report.echo(s"owner: ${ctx.owner}")
           ctx.owner.setFlag(Macro)
@@ -133,33 +128,26 @@ trait QuotesAndSplices {
         }
       }
 
-      val (outerQctx, ctx1) = popQuotes()
+      // TODO{mk} fix the compilation model
+      //   The proposed compilation model here would be to have the macro create a synthetic
+      //   object from which the definitions are exported. Is that still possible?
 
       if (inImportExport) {
-        // TODO{mk} splices in export statements don't return Expr's.
-        // TODO{mk} instead the expected type here is List[quotes.reflect.Definition] from scala.quoted._
+        // Splices in export statements don't return Expr's because an Expr is a computation
+        // that produces a (typed) value, and a definition/statement doesn't produce values.
+        // Instead the expected return type here is simply List[quotes.reflect.Definition] (see scala.quoted._)
 
-        // how could a class be built incrementally using expression-oriented language
-        // need an algebra for building classes or types
-
-        // this is incomplete
-
-        // TODO{mk} this should be a proper type, not Any
-        //tree.withType(defn.AnyType)
-
-        val runtimeModule: Symbol = defn.QuotedRuntimeModule // requiredModule("dotty.tools.dotc.typer.ExportMacro")
+        val runtimeModule: Symbol = defn.QuotedRuntimeModule
         val exprSpliceDefns : Symbol = runtimeModule.requiredMethod("spliceDefns")
 
         val internalSplice =
             untpd.Apply(untpd.ref(exprSpliceDefns.termRef), tree.expr)
 
-        val finalTree = typedApply(internalSplice, pt)(using ctx1).withSpan(tree.span)
+        val finalTree = typedApply(internalSplice, pt)(using spliceContext).withSpan(tree.span)
 
         report.echo(s"typedSplice inImportExport=${tree.hasAttachment(ImportExportInfo)} splice-tree: ${tree.show} owner: ${ctx.owner} final-tree: $finalTree\n")
 
         finalTree
-
-
       } else {
 
         // TODO typecheck directly (without `exprSplice`)
@@ -171,17 +159,9 @@ trait QuotesAndSplices {
             cpy.Splice(tree)(spliced)
           case tree => tree
 
-//        val internalSplice =
-//          outerQctx match
-//            case Some(qctxRef) => untpd.Apply(untpd.Apply(untpd.ref(defn.QuotedRuntime_exprNestedSplice.termRef), qctxRef), tree.expr)
-//            case _ => untpd.Apply(untpd.ref(defn.QuotedRuntime_exprSplice.termRef), tree.expr)
-
-//        val finalTree = typedApply(internalSplice, pt)(using ctx1).withSpan(tree.span)
-
         report.echo(s"typedSplice inImportExport=${tree.hasAttachment(ImportExportInfo)} splice-tree: ${tree.show} owner: ${ctx.owner} final-tree: $finalTree\n")
 
         finalTree
-
       }
     }
   }
