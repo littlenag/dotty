@@ -195,6 +195,8 @@ object Parsers {
     def isPureArrow(name: Name): Boolean = isIdent(name) && Feature.pureFunsEnabled
     def isPureArrow: Boolean = isPureArrow(nme.PUREARROW) || isPureArrow(nme.PURECTXARROW)
     def isErased = isIdent(nme.erased) && in.erasedEnabled
+    // Are we seeing an `erased` soft keyword that will not be an identifier?
+    def isErasedKw = isErased && in.isSoftModifierInParamModifierPosition
     def isSimpleLiteral =
       simpleLiteralTokens.contains(in.token)
       || isIdent(nme.raw.MINUS) && numericLitTokens.contains(in.lookahead.token)
@@ -476,6 +478,15 @@ object Parsers {
         case _ =>
           fail()
 
+    /** Checks that tuples don't contain a parameter. */
+    def checkNonParamTuple(t: Tree) = t match
+      case Tuple(ts) => ts.collectFirst {
+        case param: ValDef =>
+          syntaxError(em"invalid parameter definition syntax in tuple value", param.span)
+      }
+      case _ =>
+
+
     /** Convert (qual)ident to type identifier
      */
     def convertToTypeId(tree: Tree): Tree = tree match {
@@ -717,7 +728,11 @@ object Parsers {
       val t = enclosed(INDENT, body)
       if needsBraces(t) then
         patch(source, Span(startOpening, endOpening), " {")
-        patch(source, Span(closingOffset(source.nextLine(in.lastOffset))), indentWidth.toPrefix ++ "}\n")
+        val next = in.next
+        def closedByEndMarker =
+          next.token == END && (next.offset - next.lineOffset) == indentWidth.toPrefix.size
+        if closedByEndMarker then patch(source, Span(next.offset), "} // ")
+        else patch(source, Span(closingOffset(source.nextLine(in.lastOffset))), indentWidth.toPrefix ++ "}\n")
       t
     end indentedToBraces
 
@@ -1424,9 +1439,6 @@ object Parsers {
         val start = in.skipToken()
         if stats.isEmpty || !matchesAndSetEnd(stats.last) then
           syntaxError(em"misaligned end marker", Span(start, in.lastCharOffset))
-        else if overlapsPatch(source, Span(start, start)) then
-          patch(source, Span(start, start), "")
-          patch(source, Span(start, in.lastCharOffset), s"} // end $endName")
         in.token = IDENTIFIER // Leaving it as the original token can confuse newline insertion
         in.nextToken()
     end checkEndMarker
@@ -1438,12 +1450,29 @@ object Parsers {
      */
     def toplevelTyp(): Tree = rejectWildcardType(typ())
 
-    private def isFunction(tree: Tree): Boolean = tree match {
-      case Parens(tree1) => isFunction(tree1)
-      case Block(Nil, tree1) => isFunction(tree1)
-      case _: Function => true
-      case _ => false
+    private def getFunction(tree: Tree): Option[Function] = tree match {
+      case Parens(tree1) => getFunction(tree1)
+      case Block(Nil, tree1) => getFunction(tree1)
+      case t: Function => Some(t)
+      case _ => None
     }
+
+    private def checkFunctionNotErased(f: Function, context: String) =
+      def fail(span: Span) =
+        syntaxError(em"Implementation restriction: erased parameters are not supported in $context", span)
+      // erased parameter in type
+      val hasErasedParam = f match
+        case f: FunctionWithMods => f.hasErasedParams
+        case _ => false
+      if hasErasedParam then
+        fail(f.span)
+      // erased parameter in term
+      val hasErasedMods = f.args.collectFirst {
+        case v: ValDef if v.mods.is(Flags.Erased) => v
+      }
+      hasErasedMods match
+        case Some(param) => fail(param.span)
+        case _ =>
 
     /** CaptureRef  ::=  ident | `this`
      */
@@ -1477,6 +1506,7 @@ object Parsers {
     def typ(): Tree =
       val start = in.offset
       var imods = Modifiers()
+      var erasedArgs: ListBuffer[Boolean] = ListBuffer()
       def functionRest(params: List[Tree]): Tree =
         val paramSpan = Span(start, in.lastOffset)
         atSpan(start, in.offset) {
@@ -1508,10 +1538,10 @@ object Parsers {
               if isByNameType(tpt) then
                 syntaxError(em"parameter of type lambda may not be call-by-name", tpt.span)
             TermLambdaTypeTree(params.asInstanceOf[List[ValDef]], resultType)
-          else if imods.isOneOf(Given | Erased | Impure) then
+          else if imods.isOneOf(Given | Impure) || erasedArgs.contains(true) then
             if imods.is(Given) && params.isEmpty then
               syntaxError(em"context function types require at least one parameter", paramSpan)
-            FunctionWithMods(params, resultType, imods)
+            FunctionWithMods(params, resultType, imods, erasedArgs.toList)
           else if !ctx.settings.YkindProjector.isDefault then
             val (newParams :+ newResultType, tparams) = replaceKindProjectorPlaceholders(params :+ resultType): @unchecked
             lambdaAbstract(tparams, Function(newParams, newResultType))
@@ -1529,17 +1559,30 @@ object Parsers {
             functionRest(Nil)
           }
           else {
-            if isErased then imods = addModifier(imods)
             val paramStart = in.offset
+            def addErased() =
+              erasedArgs.addOne(isErasedKw)
+              if isErasedKw then { in.skipToken(); }
+            addErased()
             val ts = in.currentRegion.withCommasExpected {
               funArgType() match
                 case Ident(name) if name != tpnme.WILDCARD && in.isColon =>
                   isValParamList = true
+                  def funParam(start: Offset, mods: Modifiers) = {
+                    atSpan(start) {
+                      addErased()
+                      typedFunParam(in.offset, ident(), imods)
+                    }
+                  }
                   commaSeparatedRest(
                     typedFunParam(paramStart, name.toTermName, imods),
-                    () => typedFunParam(in.offset, ident(), imods))
+                    () => funParam(in.offset, imods))
                 case t =>
-                  commaSeparatedRest(t, funArgType)
+                  def funParam() = {
+                      addErased()
+                      funArgType()
+                  }
+                  commaSeparatedRest(t, funParam)
             }
             accept(RPAREN)
             if isValParamList || in.isArrow || isPureArrow then
@@ -1570,11 +1613,13 @@ object Parsers {
             val arrowOffset = in.skipToken()
             val body = toplevelTyp()
             atSpan(start, arrowOffset) {
-              if (isFunction(body))
-                PolyFunction(tparams, body)
-              else {
-                syntaxError(em"Implementation restriction: polymorphic function types must have a value parameter", arrowOffset)
-                Ident(nme.ERROR.toTypeName)
+              getFunction(body) match {
+                case Some(f) =>
+                  checkFunctionNotErased(f, "poly function")
+                  PolyFunction(tparams, body)
+                case None =>
+                  syntaxError(em"Implementation restriction: polymorphic function types must have a value parameter", arrowOffset)
+                  Ident(nme.ERROR.toTypeName)
               }
             }
           }
@@ -1586,14 +1631,17 @@ object Parsers {
         else infixType()
 
       in.token match
-        case ARROW | CTXARROW => functionRest(t :: Nil)
+        case ARROW | CTXARROW =>
+          erasedArgs.addOne(false)
+          functionRest(t :: Nil)
         case MATCH => matchType(t)
         case FORSOME => syntaxError(ExistentialTypesNoLongerSupported()); t
         case _ =>
           if isPureArrow then
+            erasedArgs.addOne(false)
             functionRest(t :: Nil)
           else
-            if (imods.is(Erased) && !t.isInstanceOf[FunctionWithMods])
+            if (erasedArgs.contains(true) && !t.isInstanceOf[FunctionWithMods])
               syntaxError(ErasedTypesCanOnlyBeFunctionTypes(), implicitKwPos(start))
             t
     end typ
@@ -2110,24 +2158,22 @@ object Parsers {
 
     def expr(location: Location): Tree = {
       val start = in.offset
-      def isSpecialClosureStart = in.lookahead.isIdent(nme.erased) && in.erasedEnabled
       in.token match
         case IMPLICIT =>
           closure(start, location, modifiers(BitSet(IMPLICIT)))
-        case LPAREN if isSpecialClosureStart =>
-          closure(start, location, Modifiers())
         case LBRACKET =>
           val start = in.offset
           val tparams = typeParamClause(ParamOwner.TypeParam)
           val arrowOffset = accept(ARROW)
           val body = expr(location)
           atSpan(start, arrowOffset) {
-            if (isFunction(body))
-              PolyFunction(tparams, body)
-            else {
-              syntaxError(em"Implementation restriction: polymorphic function literals must have a value parameter", arrowOffset)
-              errorTermTree(arrowOffset)
-            }
+            getFunction(body) match
+              case Some(f) =>
+                checkFunctionNotErased(f, "poly function")
+                PolyFunction(tparams, f)
+              case None =>
+                syntaxError(em"Implementation restriction: polymorphic function literals must have a value parameter", arrowOffset)
+                errorTermTree(arrowOffset)
           }
         case _ =>
           val saved = placeholderParams
@@ -2145,7 +2191,9 @@ object Parsers {
           else if isWildcard(t) then
             placeholderParams = placeholderParams ::: saved
             t
-          else wrapPlaceholders(t)
+          else
+            checkNonParamTuple(t)
+            wrapPlaceholders(t)
     }
 
     def expr1(location: Location = Location.ElseWhere): Tree = in.token match
@@ -2337,10 +2385,8 @@ object Parsers {
         if in.token == RPAREN then
           Nil
         else
-          var mods1 = mods
-          if isErased then mods1 = addModifier(mods1)
           try
-            commaSeparated(() => binding(mods1))
+            commaSeparated(() => binding(mods))
           finally
             accept(RPAREN)
       else {
@@ -2364,10 +2410,13 @@ object Parsers {
         (atSpan(start) { makeParameter(name, t, mods) }) :: Nil
       }
 
-    /**  Binding           ::= (id | `_') [`:' Type]
+    /**  Binding           ::= [`erased`] (id | `_') [`:' Type]
      */
     def binding(mods: Modifiers): Tree =
-      atSpan(in.offset) { makeParameter(bindingName(), typedOpt(), mods) }
+      atSpan(in.offset) {
+        val mods1 = if isErasedKw then addModifier(mods) else mods
+        makeParameter(bindingName(), typedOpt(), mods1)
+      }
 
     def bindingName(): TermName =
       if (in.token == USCORE) {
@@ -2478,10 +2527,10 @@ object Parsers {
         case QUOTE =>
           atSpan(in.skipToken()) {
             withinStaged(StageKind.Quoted | (if (location.inPattern) StageKind.QuotedPattern else 0)) {
-              Quote {
+              val body =
                 if (in.token == LBRACKET) inBrackets(typ())
                 else stagedBlock()
-              }
+              Quote(body)
             }
           }
         case NEW =>
@@ -2564,6 +2613,7 @@ object Parsers {
       else in.currentRegion.withCommasExpected {
         var isFormalParams = false
         def exprOrBinding() =
+          if isErasedKw then isFormalParams = true
           if isFormalParams then binding(Modifiers())
           else
             val t = exprInParens()
@@ -3112,8 +3162,8 @@ object Parsers {
  /* -------- PARAMETERS ------------------------------------------- */
 
     /** DefParamClauses       ::= DefParamClause { DefParamClause }  -- and two DefTypeParamClause cannot be adjacent
-     *  DefParamClause        ::= DefTypeParamClause 
-     *                          | DefTermParamClause 
+     *  DefParamClause        ::= DefTypeParamClause
+     *                          | DefTermParamClause
      *                          | UsingParamClause
      */
     def typeOrTermParamClauses(
@@ -3207,19 +3257,19 @@ object Parsers {
       val paramFlags = if ofClass then LocalParamAccessor else Param
       tps.map(makeSyntheticParameter(nextIdx, _, paramFlags | Synthetic | impliedMods.flags))
 
-    /** ClsTermParamClause    ::=  ‘(’ [‘erased’] ClsParams ‘)’ | UsingClsTermParamClause
+    /** ClsTermParamClause    ::=  ‘(’ ClsParams ‘)’ | UsingClsTermParamClause
      *  UsingClsTermParamClause::= ‘(’ ‘using’ [‘erased’] (ClsParams | ContextTypes) ‘)’
      *  ClsParams         ::=  ClsParam {‘,’ ClsParam}
      *  ClsParam          ::=  {Annotation}
-     * 
+     *
      *  TypelessClause    ::= DefTermParamClause
      *                      | UsingParamClause
      *
      *  DefTermParamClause::= [nl] ‘(’ [DefTermParams] ‘)’
-     *  UsingParamClause  ::=  ‘(’ ‘using’ [‘erased’] (DefTermParams | ContextTypes) ‘)’
+     *  UsingParamClause  ::=  ‘(’ ‘using’ (DefTermParams | ContextTypes) ‘)’
      *  DefImplicitClause ::=  [nl] ‘(’ ‘implicit’ DefTermParams ‘)’
      *  DefTermParams     ::=  DefTermParam {‘,’ DefTermParam}
-     *  DefTermParam      ::=  {Annotation} [‘inline’] Param
+     *  DefTermParam      ::=  {Annotation} [‘erased’] [‘inline’] Param
      *
      *  Param             ::=  id `:' ParamType [`=' Expr]
      *
@@ -3243,12 +3293,12 @@ object Parsers {
         else
           if isIdent(nme.using) then
             addParamMod(() => Mod.Given())
-          if isErased then
-            addParamMod(() => Mod.Erased())
 
       def param(): ValDef = {
         val start = in.offset
         var mods = impliedMods.withAnnotations(annotations())
+        if isErasedKw then
+          mods = addModifier(mods)
         if (ofClass) {
           mods = addFlag(modifiers(start = mods), ParamAccessor)
           mods =
@@ -3259,7 +3309,7 @@ object Parsers {
               val mod = atSpan(in.skipToken()) { Mod.Var() }
               addMod(mods, mod)
             else
-              if (!(mods.flags &~ (ParamAccessor | Inline | impliedMods.flags)).isEmpty)
+              if (!(mods.flags &~ (ParamAccessor | Inline | Erased | impliedMods.flags)).isEmpty)
                 syntaxError(em"`val` or `var` expected")
               if (firstClause && ofCaseClass) mods
               else mods | PrivateLocal
@@ -3307,12 +3357,22 @@ object Parsers {
               paramMods()
               if givenOnly && !impliedMods.is(Given) then
                 syntaxError(em"`using` expected")
-              val isParams =
-                !impliedMods.is(Given)
-                || startParamTokens.contains(in.token)
-                || isIdent && (in.name == nme.inline || in.lookahead.isColon)
-              if isParams then commaSeparated(() => param())
-              else contextTypes(ofClass, numLeadParams, impliedMods)
+              val (firstParamMod, isParams) =
+                var mods = EmptyModifiers
+                if in.lookahead.isColon then
+                  (mods, true)
+                else
+                  if isErased then mods = addModifier(mods)
+                  val isParams =
+                    !impliedMods.is(Given)
+                    || startParamTokens.contains(in.token)
+                    || isIdent && (in.name == nme.inline || in.lookahead.isColon)
+                  (mods, isParams)
+              (if isParams then commaSeparated(() => param())
+              else contextTypes(ofClass, numLeadParams, impliedMods)) match {
+                case Nil => Nil
+                case (h :: t) => h.withAddedFlags(firstParamMod.flags) :: t
+              }
           checkVarArgsRules(clause)
           clause
       }
@@ -3621,13 +3681,13 @@ object Parsers {
       }
     }
 
-    
+
 
     /** DefDef  ::=  DefSig [‘:’ Type] ‘=’ Expr
      *            |  this TypelessClauses [DefImplicitClause] `=' ConstrExpr
      *  DefDcl  ::=  DefSig `:' Type
      *  DefSig  ::=  id [DefTypeParamClause] DefTermParamClauses
-     * 
+     *
      * if clauseInterleaving is enabled:
      *  DefSig  ::=  id [DefParamClauses] [DefImplicitClause]
      */
@@ -3666,8 +3726,8 @@ object Parsers {
         val mods1 = addFlag(mods, Method)
         val ident = termIdent()
         var name = ident.name.asTermName
-        val paramss = 
-          if in.featureEnabled(Feature.clauseInterleaving) then 
+        val paramss =
+          if in.featureEnabled(Feature.clauseInterleaving) then
             // If you are making interleaving stable manually, please refer to the PR introducing it instead, section "How to make non-experimental"
             typeOrTermParamClauses(ParamOwner.Def, numLeadParams = numLeadParams)
           else
@@ -3677,7 +3737,7 @@ object Parsers {
             joinParams(tparams, vparamss)
 
         var tpt = fromWithinReturnType { typedOpt() }
-        
+
         if (migrateTo3) newLineOptWhenFollowedBy(LBRACE)
         val rhs =
           if in.token == EQUALS then

@@ -76,9 +76,13 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
     override def isType: Boolean = body.isType
   }
 
-  /** A function type or closure with `implicit`, `erased`, or `given` modifiers */
-  class FunctionWithMods(args: List[Tree], body: Tree, val mods: Modifiers)(implicit @constructorOnly src: SourceFile)
-    extends Function(args, body)
+  /** A function type or closure with `implicit` or `given` modifiers and information on which parameters are `erased` */
+  class FunctionWithMods(args: List[Tree], body: Tree, val mods: Modifiers, val erasedParams: List[Boolean])(implicit @constructorOnly src: SourceFile)
+    extends Function(args, body) {
+      assert(args.length == erasedParams.length)
+
+      def hasErasedParams = erasedParams.contains(true)
+    }
 
   /** A polymorphic function type */
   case class PolyFunction(targs: List[Tree], body: Tree)(implicit @constructorOnly src: SourceFile) extends Tree {
@@ -107,10 +111,6 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
     override def isType: Boolean = !isTerm
   }
   case class Throw(expr: Tree)(implicit @constructorOnly src: SourceFile) extends TermTree
-  case class Quote(quoted: Tree)(implicit @constructorOnly src: SourceFile) extends TermTree
-  case class Splice(expr: Tree)(implicit @constructorOnly src: SourceFile) extends TermTree {
-    def isInBraces: Boolean = span.end != expr.span.end
-  }
   case class ForYield(enums: List[Tree], expr: Tree)(implicit @constructorOnly src: SourceFile) extends TermTree
   case class ForDo(enums: List[Tree], body: Tree)(implicit @constructorOnly src: SourceFile) extends TermTree
   case class GenFrom(pat: Tree, expr: Tree, checkMode: GenCheckMode)(implicit @constructorOnly src: SourceFile) extends Tree
@@ -397,6 +397,8 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
   def SeqLiteral(elems: List[Tree], elemtpt: Tree)(implicit src: SourceFile): SeqLiteral = new SeqLiteral(elems, elemtpt)
   def JavaSeqLiteral(elems: List[Tree], elemtpt: Tree)(implicit src: SourceFile): JavaSeqLiteral = new JavaSeqLiteral(elems, elemtpt)
   def Inlined(call: tpd.Tree, bindings: List[MemberDef], expansion: Tree)(implicit src: SourceFile): Inlined = new Inlined(call, bindings, expansion)
+  def Quote(body: Tree)(implicit src: SourceFile): Quote = new Quote(body)
+  def Splice(expr: Tree)(implicit src: SourceFile): Splice = new Splice(expr)
   def TypeTree()(implicit src: SourceFile): TypeTree = new TypeTree()
   def InferredTypeTree()(implicit src: SourceFile): TypeTree = new InferredTypeTree()
   def SingletonTypeTree(ref: Tree)(implicit src: SourceFile): SingletonTypeTree = new SingletonTypeTree(ref)
@@ -618,14 +620,6 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
       case tree: Throw if expr eq tree.expr => tree
       case _ => finalize(tree, untpd.Throw(expr)(tree.source))
     }
-    def Quote(tree: Tree)(quoted: Tree)(using Context): Tree = tree match {
-      case tree: Quote if quoted eq tree.quoted => tree
-      case _ => finalize(tree, untpd.Quote(quoted)(tree.source))
-    }
-    def Splice(tree: Tree)(expr: Tree)(using Context): Tree = tree match {
-      case tree: Splice if expr eq tree.expr => tree
-      case _ => finalize(tree, untpd.Splice(expr)(tree.source))
-    }
     def ForYield(tree: Tree)(enums: List[Tree], expr: Tree)(using Context): TermTree = tree match {
       case tree: ForYield if (enums eq tree.enums) && (expr eq tree.expr) => tree
       case _ => finalize(tree, untpd.ForYield(enums, expr)(tree.source))
@@ -707,10 +701,6 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
         cpy.Tuple(tree)(transform(trees))
       case Throw(expr) =>
         cpy.Throw(tree)(transform(expr))
-      case Quote(t) =>
-        cpy.Quote(tree)(transform(t))
-      case Splice(expr) =>
-        cpy.Splice(tree)(transform(expr))
       case ForYield(enums, expr) =>
         cpy.ForYield(tree)(transform(enums), transform(expr))
       case ForDo(enums, body) =>
@@ -767,10 +757,6 @@ object untpd extends Trees.Instance[Untyped] with UntypedTreeInfo {
       case Tuple(trees) =>
         this(x, trees)
       case Throw(expr) =>
-        this(x, expr)
-      case Quote(t) =>
-        this(x, t)
-      case Splice(expr) =>
         this(x, expr)
       case ForYield(enums, expr) =>
         this(this(x, enums), expr)

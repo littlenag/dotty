@@ -19,13 +19,11 @@ import dotty.tools.dotc.core.Denotations.staticRef
 import dotty.tools.dotc.core.Flags._
 import dotty.tools.dotc.core.NameKinds.FlatName
 import dotty.tools.dotc.core.Names._
-import dotty.tools.dotc.core.StagingContext._
 import dotty.tools.dotc.core.StdNames._
 import dotty.tools.dotc.core.Symbols._
 import dotty.tools.dotc.core.TypeErasure
 import dotty.tools.dotc.core.Types._
 import dotty.tools.dotc.quoted._
-import dotty.tools.dotc.transform.TreeMapWithStages._
 import dotty.tools.dotc.typer.ImportInfo.withRootImports
 import dotty.tools.dotc.util.SrcPos
 import dotty.tools.dotc.reporting.Message
@@ -128,7 +126,7 @@ class Interpreter(pos: SrcPos, classLoader0: ClassLoader)(using Context):
       view.toList
 
     fnType.dealias match
-      case fnType: MethodType if fnType.isErasedMethod => interpretArgs(argss, fnType.resType)
+      case fnType: MethodType if fnType.hasErasedParams => interpretArgs(argss, fnType.resType)
       case fnType: MethodType =>
         val argTypes = fnType.paramInfos
         assert(argss.head.size == argTypes.size)
@@ -342,7 +340,7 @@ object Interpreter:
         case fn: Ident => Some((tpd.desugarIdent(fn).withSpan(fn.span), Nil))
         case fn: Select => Some((fn, Nil))
         case Apply(f @ Call0(fn, args1), args2) =>
-          if (f.tpe.widenDealias.isErasedMethod) Some((fn, args1))
+          if (f.tpe.widenDealias.hasErasedParams) Some((fn, args1))
           else Some((fn, args2 :: args1))
         case TypeApply(Call0(fn, args), _) => Some((fn, args))
         case _ => None

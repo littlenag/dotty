@@ -622,6 +622,8 @@ trait ImplicitRunInfo:
                 traverse(t.prefix)
             case t: ThisType if t.cls.is(Module) && t.cls.isStaticOwner =>
               traverse(t.cls.sourceModule.termRef)
+            case t: ThisType =>
+              traverse(t.tref)
             case t: ConstantType =>
               traverse(t.underlying)
             case t: TypeParamRef =>
@@ -743,6 +745,7 @@ trait ImplicitRunInfo:
    *   - If `T` is a singleton reference, the anchors of its underlying type, plus,
    *     if `T` is of the form `(P#x).type`, the anchors of `P`.
    *   - If `T` is the this-type of a static object, the anchors of a term reference to that object.
+   *   - If `T` is some other this-type `P.this.type`, the anchors of `P`.
    *   - If `T` is some other type, the union of the anchors of each constituent type of `T`.
    *
    *  The _implicit scope_ of a type `tp` is the smallest set S of term references (i.e. TermRefs)
@@ -966,7 +969,7 @@ trait Implicits:
       case Select(qual, nme.apply) if defn.isFunctionType(qual.tpe.widen) =>
         val qt = qual.tpe.widen
         val qt1 = qt.dealiasKeepAnnots
-        def addendum = if (qt1 eq qt) "" else (i"\nThe required type is an alias of: $qt1")
+        def addendum = if (qt1 eq qt) "" else (i"\nWhere $qt is an alias of: $qt1")
         i"parameter of ${qual.tpe.widen}$addendum"
       case _ =>
         i"${ if paramName.is(EvidenceParamName) then "an implicit parameter"
@@ -1588,7 +1591,6 @@ trait Implicits:
     * implicit search.
     *
     * @param cand The candidate implicit to be explored.
-    * @param pt   The target type for the above candidate.
     * @result     True if this candidate/pt are divergent, false otherwise.
     */
     def checkDivergence(cand: Candidate): Boolean =
