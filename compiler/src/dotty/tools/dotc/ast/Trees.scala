@@ -948,15 +948,6 @@ object Trees {
     type ThisTree[+T <: Untyped] = Import[T]
   }
 
-//  /** import ${...}.selectors
-//   *  from a splice. selectors follow normal rules. if the selector is empty then * selector is assumed
-//   */
-//  case class ImportMacro[-T >: Untyped] private[ast] (expr: Tree[T], selectors: List[untpd.ImportSelector])(implicit @constructorOnly src: SourceFile)
-//    extends Tree[T] {
-//    type ThisTree[-T >: Untyped] = ImportMacro[T]
-//    //def selectors: List[untpd.ImportSelector] = List(untpd.ImportSelector(Ident(nme.WILDCARD)(NoSource))(NoSource))
-//  }
-
   /** export expr.selectors
    *  where a selector is either an untyped `Ident`, `name` or
    *  an untyped thicket consisting of `name` and `rename`.

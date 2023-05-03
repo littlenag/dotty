@@ -2797,20 +2797,6 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
       case _ =>
         errorTree(exp, em"exports are only allowed from objects and classes, they can not belong to local blocks")
 
-  // TODO MKEGEL
-//  def typedExportMacro(exp: untpd.Export)(using Context): Tree =
-//    val expr1 = exp.expr match {
-//      case tree: untpd.Splice =>
-//        report.echo("typedExport splice")
-//        typedSplice(tree, AnySelectionProto, true)
-//      case other =>
-//        report.echo("typedExport other")
-//        typedExpr(other, AnySelectionProto)
-//    }
-//    // already called `checkLegalExportPath` in Namer
-//    val selectors1 = typedSelectors(exp.selectors)
-//    assignType(cpy.Export(exp)(expr1, selectors1))
-
   def typedPackageDef(tree: untpd.PackageDef)(using Context): Tree =
     val pid1 = withMode(Mode.InPackageClauseName)(typedExpr(tree.pid, AnySelectionProto))
     val pkg = pid1.symbol
@@ -3016,7 +3002,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
    *                     at the present time
    */
   def typedUnadapted(initTree: untpd.Tree, pt: Type, locked: TypeVars)(using Context): Tree = {
-    //record("typedUnadapted")
+    record("typedUnadapted")
     //report.echo("typedUnadapted")
     val xtree = expanded(initTree)
     xtree.removeAttachment(TypedAhead) match {

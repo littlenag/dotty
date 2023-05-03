@@ -485,8 +485,7 @@ object Checking {
         sym.resetFlag(flag)
 
     if (sym.is(Inline) &&
-          (  sym.is(TypeParam) && !sym.owner.isInlineTrait
-          //|| sym.is(ParamAccessor) && sym.owner.isClass
+          (  sym.is(ParamAccessor) && sym.owner.isClass
           || sym.is(TermParam) && !sym.owner.isInlineMethod
           ))
       fail(ParamsNoInline(sym.owner))
@@ -544,7 +543,7 @@ object Checking {
     if (sym.isConstructor && !sym.isPrimaryConstructor && sym.owner.is(Trait, butNot = JavaDefined))
       val addendum = if ctx.settings.Ydebug.value then s" ${sym.owner.flagsString}" else ""
       fail(em"Traits cannot have secondary constructors$addendum")
-    checkApplicable(Inline,  sym.isType || (sym.isTerm && !sym.isOneOf(Mutable | Module)))
+    checkApplicable(Inline, sym.isTerm && !sym.isOneOf(Mutable | Module))
     checkApplicable(Lazy, !sym.isOneOf(Method | Mutable))
     if (sym.isType && !sym.isOneOf(Deferred | JavaDefined))
       for (cls <- sym.allOverriddenSymbols.filter(_.isClass)) {

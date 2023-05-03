@@ -249,7 +249,7 @@ object Parsers {
       }
 
     /**
-     * Accept either ${..} or $foo(..)
+     * Accept either ${..} or (eventually) $foo(..)
      */
     def isImportExportSplice: Boolean =
       in.token == IDENTIFIER && in.name(0) == '$'
@@ -3840,8 +3840,6 @@ object Parsers {
      */
     def tmplDef(start: Int, mods: Modifiers): Tree =
       in.token match {
-        case IDENTIFIER if isIdent(nme.inline) =>
-          classDef(start, in.skipToken(addFlag(mods, Trait | Inline)))
         case TRAIT =>
           classDef(start, in.skipToken(addFlag(mods, Trait)))
         case CLASS =>

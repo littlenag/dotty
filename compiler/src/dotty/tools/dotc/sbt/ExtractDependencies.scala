@@ -15,14 +15,14 @@ import dotty.tools.dotc.core.Names._
 import dotty.tools.dotc.core.Phases._
 import dotty.tools.dotc.core.Symbols._
 import dotty.tools.dotc.core.Denotations.StaleSymbol
-import dotty.tools.dotc.core.Types.*
-import dotty.tools.dotc.transform.SymUtils.*
-import dotty.tools.dotc.util.{NoSourcePosition, SrcPos}
+import dotty.tools.dotc.core.Types._
+import dotty.tools.dotc.transform.SymUtils._
+import dotty.tools.dotc.util.{SrcPos, NoSourcePosition}
 import dotty.tools.io
 import dotty.tools.io.{AbstractFile, PlainFile, ZipArchive}
 import xsbti.UseScope
 import xsbti.api.DependencyContext
-import xsbti.api.DependencyContext.*
+import xsbti.api.DependencyContext._
 
 import scala.collection.{Set, mutable}
 
@@ -339,7 +339,7 @@ private class ExtractDependenciesCollector extends tpd.TreeTraverser { thisTreeT
 
 
   /** Traverse the tree of a source file and record the dependencies and used names which
-   *  can be retrieved using `dependencies` and `usedNames`.
+   *  can be retrieved using `dependencies` and`usedNames`.
    */
   override def traverse(tree: Tree)(using Context): Unit = try {
     tree match {

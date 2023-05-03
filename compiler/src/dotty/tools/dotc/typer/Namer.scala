@@ -414,9 +414,6 @@ class Namer { typer: Typer =>
         ctx
       case imp: Import =>
         ctx.importContext(imp, createSymbol(imp))
-      //case exp: ExportMacro =>
-        //println("indexExpanded")
-        //ctx.exportMacroContext(exp, createSymbol(exp))
       case mdef: DefTree =>
         val sym = createSymbol(mdef)
         enterSymbol(sym)
@@ -1105,12 +1102,8 @@ class Namer { typer: Typer =>
       import scala.quoted.runtime.impl.QuotesImpl
 
       val buf = new mutable.ListBuffer[tpd.MemberDef]
+      // TODO{mk} support selectors...
       val Export(expr,selectors) = exp
-
-      //val helpers = ExportForwardingHelpers(exp)
-
-      // the export macro will have a type of Any, but we actually have to get the type of the
-      // object inside and a path to it.
 
       // ImportExportInfo is already added!!
       // This will inform the Typer that the Splice it sees is part of an Export Macro!
@@ -1124,18 +1117,12 @@ class Namer { typer: Typer =>
       // this typechecks the macro call
       val path = typedAheadExpr(expr, AnySelectionProto)
 
-      // turn path which is Splice into Inlined
+      // path should be a Splice, which a normal macro would turn into an Inlined
+      // however, we are going to skip that an actually evaluate our macro
 
-      //val Splice(inner) = path
+      // TODO{mk} its not a Splice just yet, we should fix that!
 
-      // TODO{mk} symbolOfTree in checkSplice
-      // here is where we evaluate our macro call
-      // is it though?
-
-      val printer = new RefinedPrinter(ctx)
-
-      // Returns an Inlined
-      //val inlined = Inliner.inlineCall(path)
+      //val printer = new RefinedPrinter(ctx)
 
       report.echo(s"[exportMacroForwarders] Export Owner=$owner  ctx owner ${ctx.owner}")
       report.echo(s"[exportMacroForwarders] Export Expr=$expr")
@@ -1163,38 +1150,22 @@ class Namer { typer: Typer =>
       val context = SpliceScope.contextWithNewSpliceScope(ctx.owner.sourcePos)(using MacroExpansion.context(owner)).withOwner(ctx.owner)
 
       inContext(context) {
-        //val interpreter = new Interpreter(exp.srcPos, MacroClassLoader.fromContext)
+        // Pull in the Splice interpreter since it handles Type expansion, which we need
         val interpreter = new dotty.tools.dotc.transform.Splicer.SpliceInterpreter(exp.srcPos, MacroClassLoader.fromContext)
 
         report.echo(s"[exportMacroForwarders] Interpreter loaded")
 
-        // Quotes => res.args.head
-        // We unwrap the curried apply of spliceDefns and instead just interpret to a lambda type
-        val exportMacroInstance = interpreter.interpret[Quotes => List[?]](head).get
-        //assert(annotInstance.getClass.getClassLoader.loadClass("scala.annotation.MacroAnnotation").isInstance(annotInstance))
+        // We unwrap the curried apply of spliceDefns and cast it to a lambda type
+        // we can then invoke directly.
+        val exportMacroInstance = interpreter.interpret[Quotes => List[tpd.MemberDef]](head).get
 
         report.echo(s"[exportMacroForwarders] Interpreter run")
 
-        //val tree = owner
-
-        val quotes = QuotesImpl()
-
-        report.echo(s"[exportMacroForwarders] Quotes Impl created")
-
-        //val quotes = QuotesImpl() //(using SpliceScope.contextWithNewSpliceScope(tree.symbol.sourcePos)(using MacroExpansion.context(tree)).withOwner(tree.symbol.owner))
-        //exportMacroInstance.spliceDefns(using quotes)(path.asInstanceOf[scala.quoted.Expr[_]])
-
-        //val f = (q:Quotes) ?=> path.asInstanceOf[scala.quoted.Expr[_]]
-
-        // i need to stop and spend more time understanding how just regular export works
-        // it could be that because phases run to completion expanding the export macro here
-        // just fundamentally can't work
-
         try {
-          val h = exportMacroInstance(quotes)
-          report.echo(s"[exportMacroForwarders] RAN MACRO SUCCESSFULLY [${h.length}] $h")
-          val g = h.map(_.asInstanceOf[tpd.MemberDef])
-          buf.addAll(g)
+          val quotes = QuotesImpl()
+          val defns = exportMacroInstance(quotes)
+          report.echo(s"[exportMacroForwarders] RAN MACRO SUCCESSFULLY [${defns.length}] $defns")
+          buf.addAll(defns)
         } catch {
           case ex@Interpreter.StopInterpretation(msg, pos) =>
             report.echo(s"Exception while running spliceDefns macro (stopped interpretation): $msg $pos")
@@ -1211,9 +1182,7 @@ class Namer { typer: Typer =>
 
       //report.echo(s"inlined: ${inlined}")
 
-      //addForwarders(selectors, Nil)
-
-      // this is the how and where things are expanded and added to the code tree
+      // the forwarders we append here will be added following the usual rules of export
       val forwarders = buf.toList
       exp.pushAttachment(ExportForwarders, forwarders)
       forwarders
@@ -1738,13 +1707,6 @@ class Namer { typer: Typer =>
       )
       typr.println(i"completing $denot, parents = $parents%, %, parentTypes = $parentTypes%, %")
 
-      // TODO{mk}
-      // Apply modifications by inherited inline traits
-      // inspect the body
-      // if a macro call try to expand the macro
-
-
-      // Now handle deriving type class instances...
       if (impl.derived.nonEmpty) {
         val (derivingClass, derivePos) = original.removeAttachment(desugar.DerivingCompanion) match {
           case Some(pos) => (cls.companionClass.orElse(cls).asClass, pos)

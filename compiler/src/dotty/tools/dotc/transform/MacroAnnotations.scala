@@ -103,7 +103,6 @@ class MacroAnnotations:
       debug.println(result.map(_.show).mkString("expanded to:\n", "\n", ""))
       result
 
-  // TODO{mk}
   /** Interpret the code `new annot(..).transform(using <Quotes(ctx)>)(<tree>)` */
   private def callMacro(interpreter: Interpreter, tree: MemberDef, annot: Annotation)(using Context): List[MemberDef] =
     // TODO: Remove when scala.annaotaion.MacroAnnotation is no longer experimental

@@ -2863,7 +2863,7 @@ class Typer(@constructorOnly nestingLevel: Int = 0) extends Namer
    *                     at the present time
    */
   def typedUnadapted(initTree: untpd.Tree, pt: Type, locked: TypeVars)(using Context): Tree = {
-    //record("typedUnadapted")
+    record("typedUnadapted")
     val xtree = expanded(initTree)
     xtree.removeAttachment(TypedAhead) match {
       case Some(ttree) => ttree

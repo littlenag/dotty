@@ -2156,9 +2156,7 @@ extends SyntaxMsg(PolymorphicMethodMissingTypeInParentID) {
 
 class ParamsNoInline(owner: Symbol)(using Context)
   extends SyntaxMsg(ParamsNoInlineID) {
-  // TODO{mk} and must be used for trait arguments!
-  def msg(using Context) = 
-    i"""${hl("inline")} modifier can only be used for parameters of inline methods"""
+  def msg(using Context) = i"""${hl("inline")} modifier can only be used for parameters of inline methods"""
   def explain(using Context) = ""
 }
 
